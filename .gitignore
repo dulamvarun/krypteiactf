@@ -13,3 +13,4 @@ data/*.db-shm
 # OS metadata
 .DS_Store
 Thumbs.db
+push.bat
