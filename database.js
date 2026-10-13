@@ -1,65 +1,7 @@
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
-
-const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const dbPath = path.join(dataDir, 'krypteia_ctf.db');
-const db = new Database(dbPath);
-
-// Enable WAL mode for high concurrency
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-// Initialize schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL COLLATE NOCASE,
-    email TEXT UNIQUE NOT NULL COLLATE NOCASE,
-    password_hash TEXT NOT NULL,
-    salt TEXT NOT NULL,
-    is_demo INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS solves (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    challenge_id TEXT NOT NULL,
-    points INTEGER NOT NULL,
-    solved_at TEXT NOT NULL,
-    UNIQUE(user_id, challenge_id),
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS submissions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    challenge_id TEXT NOT NULL,
-    flag_submitted TEXT NOT NULL,
-    is_correct INTEGER NOT NULL,
-    submitted_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS competition_config (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
 
 // Password hashing helpers using native crypto
 function hashPassword(password) {
@@ -73,11 +15,130 @@ function verifyPassword(password, salt, hash) {
   return check === hash;
 }
 
-// User registration
-function createUser(username, email, password, isDemo = 0) {
-  const cleanUsername = username.trim();
-  const cleanEmail = email.trim().toLowerCase();
-  
+// -------------------------------------------------------------
+// Engine 1: SQLite Engine (via better-sqlite3)
+// -------------------------------------------------------------
+let sqliteDb = null;
+let useSqlite = false;
+
+try {
+  if (process.env.FORCE_MEMORY_DB) {
+    throw new Error('Forced memory store for testing');
+  }
+  const Database = require('better-sqlite3');
+  let dataDir;
+  let dbPath;
+
+  // If in Vercel or read-only serverless environment, use /tmp
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    dataDir = path.join(os.tmpdir(), 'krypteia_data');
+    try {
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      dbPath = path.join(dataDir, 'krypteia_ctf.db');
+      sqliteDb = new Database(dbPath);
+    } catch (e) {
+      // In-memory sqlite fallback if /tmp fails
+      sqliteDb = new Database(':memory:');
+    }
+  } else {
+    dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    dbPath = path.join(dataDir, 'krypteia_ctf.db');
+    sqliteDb = new Database(dbPath);
+  }
+
+  // WAL mode (ignore error on memory db)
+  try {
+    sqliteDb.pragma('journal_mode = WAL');
+  } catch (_) {}
+  sqliteDb.pragma('foreign_keys = ON');
+
+  // Initialize schema
+  sqliteDb.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+      email TEXT UNIQUE NOT NULL COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      is_demo INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS solves (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      challenge_id TEXT NOT NULL,
+      points INTEGER NOT NULL,
+      solved_at TEXT NOT NULL,
+      UNIQUE(user_id, challenge_id),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      challenge_id TEXT NOT NULL,
+      flag_submitted TEXT NOT NULL,
+      is_correct INTEGER NOT NULL,
+      submitted_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS competition_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  useSqlite = true;
+} catch (err) {
+  console.warn('better-sqlite3 unavailable or failed to initialize (' + err.message + '). Using pure-JS resilient in-memory engine.');
+  useSqlite = false;
+  sqliteDb = null;
+}
+
+// -------------------------------------------------------------
+// Engine 2: Pure-JS In-Memory Resilient Engine (Zero native dependencies, 100% Vercel Serverless safe)
+// -------------------------------------------------------------
+const memoryStore = {
+  users: [],
+  sessions: [],
+  solves: [],
+  submissions: [],
+  config: {
+    competition_name: 'KRYPTEIA CTF 2026',
+    club: 'Krypteia — The Cyber Security Technical Club',
+    institution: "St. Peter's Engineering College",
+    status: 'Live',
+    start_time: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    end_time: new Date(Date.now() + 21 * 3600 * 1000).toISOString()
+  },
+  nextUserId: 1,
+  nextSolveId: 1,
+  nextSubId: 1
+};
+
+// -------------------------------------------------------------
+// Unified Database Interface Implementation
+// -------------------------------------------------------------
+
+function validateUserInput(username, email, password) {
+  const cleanUsername = (username || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+
   if (!cleanUsername || cleanUsername.length < 3 || cleanUsername.length > 30) {
     throw new Error('Username must be between 3 and 30 characters');
   }
@@ -90,219 +151,397 @@ function createUser(username, email, password, isDemo = 0) {
   if (!password || password.length < 6) {
     throw new Error('Password must be at least 6 characters long');
   }
-
-  // Check unique constraints
-  const existingUser = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(cleanUsername, cleanEmail);
-  if (existingUser) {
-    throw new Error('Username or email is already registered');
-  }
-
-  const { salt, hash } = hashPassword(password);
-  const now = new Date().toISOString();
-
-  const stmt = db.prepare(`
-    INSERT INTO users (username, email, password_hash, salt, is_demo, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  const info = stmt.run(cleanUsername, cleanEmail, hash, salt, isDemo, now);
-  return {
-    id: info.lastInsertRowid,
-    username: cleanUsername,
-    email: cleanEmail,
-    created_at: now
-  };
+  return { cleanUsername, cleanEmail };
 }
 
-// User authentication
+function createUser(username, email, password, isDemo = 0) {
+  const { cleanUsername, cleanEmail } = validateUserInput(username, email, password);
+
+  if (useSqlite) {
+    const existingUser = sqliteDb.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(cleanUsername, cleanEmail);
+    if (existingUser) {
+      throw new Error('Username or email is already registered');
+    }
+
+    const { salt, hash } = hashPassword(password);
+    const now = new Date().toISOString();
+
+    const stmt = sqliteDb.prepare(`
+      INSERT INTO users (username, email, password_hash, salt, is_demo, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    const info = stmt.run(cleanUsername, cleanEmail, hash, salt, isDemo, now);
+    return {
+      id: info.lastInsertRowid,
+      username: cleanUsername,
+      email: cleanEmail,
+      created_at: now
+    };
+  } else {
+    const exists = memoryStore.users.some(u => 
+      u.username.toLowerCase() === cleanUsername.toLowerCase() || 
+      u.email.toLowerCase() === cleanEmail.toLowerCase()
+    );
+    if (exists) {
+      throw new Error('Username or email is already registered');
+    }
+
+    const { salt, hash } = hashPassword(password);
+    const now = new Date().toISOString();
+    const newUser = {
+      id: memoryStore.nextUserId++,
+      username: cleanUsername,
+      email: cleanEmail,
+      password_hash: hash,
+      salt: salt,
+      is_demo: isDemo ? 1 : 0,
+      created_at: now
+    };
+    memoryStore.users.push(newUser);
+    return {
+      id: newUser.id,
+      username: newUser.username,
+      email: newUser.email,
+      created_at: newUser.created_at
+    };
+  }
+}
+
 function authenticateUser(identifier, password) {
   const cleanId = (identifier || '').trim();
   if (!cleanId || !password) {
     throw new Error('Identifier and password are required');
   }
 
-  const user = db.prepare(`
-    SELECT * FROM users WHERE username = ? OR email = ?
-  `).get(cleanId, cleanId.toLowerCase());
+  if (useSqlite) {
+    const user = sqliteDb.prepare(`
+      SELECT * FROM users WHERE username = ? OR email = ?
+    `).get(cleanId, cleanId.toLowerCase());
 
-  if (!user) {
-    throw new Error('Invalid username or password');
+    if (!user) {
+      throw new Error('Invalid username or password');
+    }
+
+    const isValid = verifyPassword(password, user.salt, user.password_hash);
+    if (!isValid) {
+      throw new Error('Invalid username or password');
+    }
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      created_at: user.created_at
+    };
+  } else {
+    const cleanLower = cleanId.toLowerCase();
+    const user = memoryStore.users.find(u => 
+      u.username.toLowerCase() === cleanLower || 
+      u.email.toLowerCase() === cleanLower
+    );
+
+    if (!user) {
+      throw new Error('Invalid username or password');
+    }
+
+    const isValid = verifyPassword(password, user.salt, user.password_hash);
+    if (!isValid) {
+      throw new Error('Invalid username or password');
+    }
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      created_at: user.created_at
+    };
   }
-
-  const isValid = verifyPassword(password, user.salt, user.password_hash);
-  if (!isValid) {
-    throw new Error('Invalid username or password');
-  }
-
-  return {
-    id: user.id,
-    username: user.username,
-    email: user.email,
-    created_at: user.created_at
-  };
 }
 
-// Session handling
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-  db.prepare(`
-    INSERT INTO sessions (token, user_id, created_at, expires_at)
-    VALUES (?, ?, ?, ?)
-  `).run(token, userId, now.toISOString(), expiresAt.toISOString());
+  if (useSqlite) {
+    sqliteDb.prepare(`
+      INSERT INTO sessions (token, user_id, created_at, expires_at)
+      VALUES (?, ?, ?, ?)
+    `).run(token, userId, now.toISOString(), expiresAt.toISOString());
+  } else {
+    memoryStore.sessions.push({
+      token,
+      user_id: userId,
+      created_at: now.toISOString(),
+      expires_at: expiresAt.toISOString()
+    });
+  }
 
   return token;
 }
 
 function getUserBySession(token) {
   if (!token) return null;
-
   const now = new Date().toISOString();
-  const session = db.prepare(`
-    SELECT s.user_id, u.id, u.username, u.email, u.created_at
-    FROM sessions s
-    JOIN users u ON s.user_id = u.id
-    WHERE s.token = ? AND s.expires_at > ?
-  `).get(token, now);
 
-  if (!session) return null;
+  if (useSqlite) {
+    const session = sqliteDb.prepare(`
+      SELECT s.user_id, u.id, u.username, u.email, u.created_at
+      FROM sessions s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.token = ? AND s.expires_at > ?
+    `).get(token, now);
 
-  return {
-    id: session.id,
-    username: session.username,
-    email: session.email,
-    created_at: session.created_at
-  };
+    if (!session) return null;
+
+    return {
+      id: session.id,
+      username: session.username,
+      email: session.email,
+      created_at: session.created_at
+    };
+  } else {
+    const session = memoryStore.sessions.find(s => s.token === token && s.expires_at > now);
+    if (!session) return null;
+
+    const user = memoryStore.users.find(u => u.id === session.user_id);
+    if (!user) return null;
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      created_at: user.created_at
+    };
+  }
 }
 
 function deleteSession(token) {
   if (!token) return;
-  db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  if (useSqlite) {
+    sqliteDb.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  } else {
+    const idx = memoryStore.sessions.findIndex(s => s.token === token);
+    if (idx !== -1) memoryStore.sessions.splice(idx, 1);
+  }
 }
 
-// Solve operations (ATOMIC & CONCURRENCY-SAFE)
 function recordSolve(userId, challengeId, points) {
   const now = new Date().toISOString();
 
-  const insertSolveTx = db.transaction(() => {
-    // Check if already solved
-    const existing = db.prepare(`
-      SELECT id FROM solves WHERE user_id = ? AND challenge_id = ?
-    `).get(userId, challengeId);
+  if (useSqlite) {
+    const insertSolveTx = sqliteDb.transaction(() => {
+      const existing = sqliteDb.prepare(`
+        SELECT id FROM solves WHERE user_id = ? AND challenge_id = ?
+      `).get(userId, challengeId);
 
+      if (existing) {
+        return { alreadySolved: true };
+      }
+
+      sqliteDb.prepare(`
+        INSERT INTO solves (user_id, challenge_id, points, solved_at)
+        VALUES (?, ?, ?, ?)
+      `).run(userId, challengeId, points, now);
+
+      return { success: true, points, solved_at: now };
+    });
+
+    return insertSolveTx();
+  } else {
+    const existing = memoryStore.solves.find(s => s.user_id === userId && s.challenge_id === challengeId);
     if (existing) {
       return { alreadySolved: true };
     }
 
-    // Insert solve
-    db.prepare(`
-      INSERT INTO solves (user_id, challenge_id, points, solved_at)
-      VALUES (?, ?, ?, ?)
-    `).run(userId, challengeId, points, now);
+    memoryStore.solves.push({
+      id: memoryStore.nextSolveId++,
+      user_id: userId,
+      challenge_id: challengeId,
+      points,
+      solved_at: now
+    });
 
     return { success: true, points, solved_at: now };
-  });
-
-  return insertSolveTx();
+  }
 }
 
-// Record submission attempt
 function recordSubmission(userId, challengeId, flagSubmitted, isCorrect) {
   const now = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO submissions (user_id, challenge_id, flag_submitted, is_correct, submitted_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(userId, challengeId, flagSubmitted.substring(0, 100), isCorrect ? 1 : 0, now);
+  const subFlag = (flagSubmitted || '').substring(0, 100);
+
+  if (useSqlite) {
+    sqliteDb.prepare(`
+      INSERT INTO submissions (user_id, challenge_id, flag_submitted, is_correct, submitted_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(userId, challengeId, subFlag, isCorrect ? 1 : 0, now);
+  } else {
+    memoryStore.submissions.push({
+      id: memoryStore.nextSubId++,
+      user_id: userId,
+      challenge_id: challengeId,
+      flag_submitted: subFlag,
+      is_correct: isCorrect ? 1 : 0,
+      submitted_at: now
+    });
+  }
 }
 
-// Get user solved challenge IDs
 function getUserSolves(userId) {
   if (!userId) return [];
-  const rows = db.prepare(`
-    SELECT challenge_id, points, solved_at FROM solves WHERE user_id = ? ORDER BY solved_at DESC
-  `).all(userId);
-  return rows;
+  if (useSqlite) {
+    return sqliteDb.prepare(`
+      SELECT challenge_id, points, solved_at FROM solves WHERE user_id = ? ORDER BY solved_at DESC
+    `).all(userId);
+  } else {
+    return memoryStore.solves
+      .filter(s => s.user_id === userId)
+      .sort((a, b) => (b.solved_at > a.solved_at ? 1 : -1))
+      .map(s => ({ challenge_id: s.challenge_id, points: s.points, solved_at: s.solved_at }));
+  }
 }
 
-// Get solve count per challenge
 function getChallengeSolveCounts() {
-  const rows = db.prepare(`
-    SELECT challenge_id, COUNT(*) as count FROM solves GROUP BY challenge_id
-  `).all();
   const map = {};
-  rows.forEach(r => {
-    map[r.challenge_id] = r.count;
-  });
+  if (useSqlite) {
+    const rows = sqliteDb.prepare(`
+      SELECT challenge_id, COUNT(*) as count FROM solves GROUP BY challenge_id
+    `).all();
+    rows.forEach(r => { map[r.challenge_id] = r.count; });
+  } else {
+    memoryStore.solves.forEach(s => {
+      map[s.challenge_id] = (map[s.challenge_id] || 0) + 1;
+    });
+  }
   return map;
 }
 
-// Get full authoritative leaderboard
 function getLeaderboard(currentUserId = null) {
-  const rows = db.prepare(`
-    SELECT 
-      u.id as user_id,
-      u.username,
-      COALESCE(SUM(s.points), 0) as total_points,
-      COUNT(s.id) as solved_count,
-      MAX(s.solved_at) as last_solve_time
-    FROM users u
-    LEFT JOIN solves s ON u.id = s.user_id
-    GROUP BY u.id, u.username
-    ORDER BY total_points DESC,
-             CASE WHEN last_solve_time IS NULL THEN 1 ELSE 0 END ASC,
-             last_solve_time ASC,
-             u.id ASC
-  `).all();
+  if (useSqlite) {
+    const rows = sqliteDb.prepare(`
+      SELECT 
+        u.id as user_id,
+        u.username,
+        COALESCE(SUM(s.points), 0) as total_points,
+        COUNT(s.id) as solved_count,
+        MAX(s.solved_at) as last_solve_time
+      FROM users u
+      LEFT JOIN solves s ON u.id = s.user_id
+      GROUP BY u.id, u.username
+      ORDER BY total_points DESC,
+               CASE WHEN last_solve_time IS NULL THEN 1 ELSE 0 END ASC,
+               last_solve_time ASC,
+               u.id ASC
+    `).all();
 
-  return rows.map((row, idx) => ({
-    rank: idx + 1,
-    userId: row.user_id,
-    username: row.username,
-    totalPoints: row.total_points,
-    solvedCount: row.solved_count,
-    lastSolveTime: row.last_solve_time,
-    isCurrentParticipant: currentUserId ? row.user_id === currentUserId : false
-  }));
+    return rows.map((row, idx) => ({
+      rank: idx + 1,
+      userId: row.user_id,
+      username: row.username,
+      totalPoints: row.total_points,
+      solvedCount: row.solved_count,
+      lastSolveTime: row.last_solve_time,
+      isCurrentParticipant: currentUserId ? row.user_id === currentUserId : false
+    }));
+  } else {
+    // Group solves by user
+    const userScores = memoryStore.users.map(u => {
+      const userSolves = memoryStore.solves.filter(s => s.user_id === u.id);
+      const totalPoints = userSolves.reduce((sum, s) => sum + s.points, 0);
+      let lastSolveTime = null;
+      if (userSolves.length > 0) {
+        lastSolveTime = userSolves.reduce((max, s) => (s.solved_at > max ? s.solved_at : max), userSolves[0].solved_at);
+      }
+      return {
+        user_id: u.id,
+        username: u.username,
+        total_points: totalPoints,
+        solved_count: userSolves.length,
+        last_solve_time: lastSolveTime
+      };
+    });
+
+    userScores.sort((a, b) => {
+      if (b.total_points !== a.total_points) {
+        return b.total_points - a.total_points;
+      }
+      // Tie breaking
+      if (a.last_solve_time && !b.last_solve_time) return -1;
+      if (!a.last_solve_time && b.last_solve_time) return 1;
+      if (a.last_solve_time && b.last_solve_time) {
+        if (a.last_solve_time < b.last_solve_time) return -1;
+        if (a.last_solve_time > b.last_solve_time) return 1;
+      }
+      return a.user_id - b.user_id;
+    });
+
+    return userScores.map((row, idx) => ({
+      rank: idx + 1,
+      userId: row.user_id,
+      username: row.username,
+      totalPoints: row.total_points,
+      solvedCount: row.solved_count,
+      lastSolveTime: row.last_solve_time,
+      isCurrentParticipant: currentUserId ? row.user_id === currentUserId : false
+    }));
+  }
 }
 
-// Get participant dashboard stats
 function getUserStats(userId) {
   if (!userId) return null;
 
-  const user = db.prepare('SELECT id, username, email FROM users WHERE id = ?').get(userId);
-  if (!user) return null;
+  if (useSqlite) {
+    const user = sqliteDb.prepare('SELECT id, username, email FROM users WHERE id = ?').get(userId);
+    if (!user) return null;
 
-  const solves = db.prepare(`
-    SELECT challenge_id, points, solved_at FROM solves WHERE user_id = ?
-  `).all(userId);
+    const solves = sqliteDb.prepare(`
+      SELECT challenge_id, points, solved_at FROM solves WHERE user_id = ?
+    `).all(userId);
 
-  const totalPoints = solves.reduce((sum, s) => sum + s.points, 0);
+    const totalPoints = solves.reduce((sum, s) => sum + s.points, 0);
+    const leaderboard = getLeaderboard();
+    const entry = leaderboard.find(l => l.userId === userId);
+    const rank = entry ? entry.rank : leaderboard.length + 1;
 
-  // Calculate current rank
-  const leaderboard = getLeaderboard();
-  const entry = leaderboard.find(l => l.userId === userId);
-  const rank = entry ? entry.rank : leaderboard.length + 1;
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      rank,
+      totalPoints,
+      solvedCount: solves.length,
+      solves: solves.map(s => s.challenge_id)
+    };
+  } else {
+    const user = memoryStore.users.find(u => u.id === userId);
+    if (!user) return null;
 
-  return {
-    id: user.id,
-    username: user.username,
-    email: user.email,
-    rank,
-    totalPoints,
-    solvedCount: solves.length,
-    solves: solves.map(s => s.challenge_id)
-  };
+    const solves = memoryStore.solves.filter(s => s.user_id === userId);
+    const totalPoints = solves.reduce((sum, s) => sum + s.points, 0);
+    const leaderboard = getLeaderboard();
+    const entry = leaderboard.find(l => l.userId === userId);
+    const rank = entry ? entry.rank : leaderboard.length + 1;
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      rank,
+      totalPoints,
+      solvedCount: solves.length,
+      solves: solves.map(s => s.challenge_id)
+    };
+  }
 }
 
 // Rate limiting support
-const submissionRateMap = new Map(); // userId -> [timestamps]
+const submissionRateMap = new Map();
 
 function checkRateLimit(userId) {
   const now = Date.now();
-  const windowMs = 5000; // 5 seconds
-  const maxAttempts = 3;  // max 3 submissions per 5 seconds
+  const windowMs = 5000;
+  const maxAttempts = 3;
 
   let timestamps = submissionRateMap.get(userId) || [];
   timestamps = timestamps.filter(t => now - t < windowMs);
@@ -318,32 +557,8 @@ function checkRateLimit(userId) {
   return { limited: false };
 }
 
-// Seed initial demo data if database is fresh
+// Seed initial competition demo participants
 function seedDemoDataIfNeeded() {
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  if (userCount > 0) return;
-
-  console.log('Seeding initial competition participants...');
-
-  // 1. Set competition metadata
-  const startTime = new Date(Date.now() - 3 * 3600 * 1000).toISOString(); // started 3 hours ago
-  const endTime = new Date(Date.now() + 21 * 3600 * 1000).toISOString();  // ends in 21 hours
-  const insertConfig = db.prepare('INSERT OR REPLACE INTO competition_config (key, value) VALUES (?, ?)');
-  insertConfig.run('competition_name', 'KRYPTEIA CTF 2026');
-  insertConfig.run('institution', "St. Peter's Engineering College");
-  insertConfig.run('club', 'Krypteia — The Cyber Security Technical Club');
-  insertConfig.run('status', 'Live');
-  insertConfig.run('start_time', startTime);
-  insertConfig.run('end_time', endTime);
-
-  // 2. Seed realistic college participants
-  const demoUsers = [
-    { username: 'CipherViper', email: 'cipher@spec.ac.in', solves: ['gen-01', 'crypto-01', 'web-01', 'forensics-01'], offsetMin: 140 },
-    { username: 'NullByte_Spec', email: 'nullbyte@spec.ac.in', solves: ['gen-01', 'crypto-01', 'osint-01'], offsetMin: 110 },
-    { username: 'ZeroDayGhost', email: 'zeroday@spec.ac.in', solves: ['gen-01', 'web-01'], offsetMin: 90 },
-    { username: 'ByteBandit', email: 'bandit@spec.ac.in', solves: ['gen-01'], offsetMin: 45 }
-  ];
-
   const pointsMap = {
     'gen-01': 50,
     'crypto-01': 100,
@@ -355,53 +570,104 @@ function seedDemoDataIfNeeded() {
     'web-02': 175
   };
 
+  const demoUsers = [
+    { username: 'CipherViper', email: 'cipher@spec.ac.in', solves: ['gen-01', 'crypto-01', 'web-01', 'forensics-01'], offsetMin: 140 },
+    { username: 'NullByte_Spec', email: 'nullbyte@spec.ac.in', solves: ['gen-01', 'crypto-01', 'osint-01'], offsetMin: 110 },
+    { username: 'ZeroDayGhost', email: 'zeroday@spec.ac.in', solves: ['gen-01', 'web-01'], offsetMin: 90 },
+    { username: 'ByteBandit', email: 'bandit@spec.ac.in', solves: ['gen-01'], offsetMin: 45 }
+  ];
+
   const nowMs = Date.now();
 
-  for (const d of demoUsers) {
-    const user = createUser(d.username, d.email, 'Krypteia#2026', 1);
-    let solveTimeMs = nowMs - d.offsetMin * 60 * 1000;
+  if (useSqlite) {
+    const userCount = sqliteDb.prepare('SELECT COUNT(*) as count FROM users').get().count;
+    if (userCount > 0) return;
 
-    for (const chId of d.solves) {
-      const pts = pointsMap[chId] || 100;
-      const solvedAt = new Date(solveTimeMs).toISOString();
-      db.prepare(`
-        INSERT INTO solves (user_id, challenge_id, points, solved_at)
-        VALUES (?, ?, ?, ?)
-      `).run(user.id, chId, pts, solvedAt);
-      solveTimeMs += 12 * 60 * 1000; // subsequent solve 12 mins later
+    const startTime = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    const endTime = new Date(Date.now() + 21 * 3600 * 1000).toISOString();
+    const insertConfig = sqliteDb.prepare('INSERT OR REPLACE INTO competition_config (key, value) VALUES (?, ?)');
+    insertConfig.run('competition_name', 'KRYPTEIA CTF 2026');
+    insertConfig.run('institution', "St. Peter's Engineering College");
+    insertConfig.run('club', 'Krypteia — The Cyber Security Technical Club');
+    insertConfig.run('status', 'Live');
+    insertConfig.run('start_time', startTime);
+    insertConfig.run('end_time', endTime);
+
+    for (const d of demoUsers) {
+      const user = createUser(d.username, d.email, 'Krypteia#2026', 1);
+      let solveTimeMs = nowMs - d.offsetMin * 60 * 1000;
+
+      for (const chId of d.solves) {
+        const pts = pointsMap[chId] || 100;
+        const solvedAt = new Date(solveTimeMs).toISOString();
+        sqliteDb.prepare(`
+          INSERT INTO solves (user_id, challenge_id, points, solved_at)
+          VALUES (?, ?, ?, ?)
+        `).run(user.id, chId, pts, solvedAt);
+        solveTimeMs += 12 * 60 * 1000;
+      }
+    }
+  } else {
+    if (memoryStore.users.length > 0) return;
+
+    for (const d of demoUsers) {
+      const user = createUser(d.username, d.email, 'Krypteia#2026', 1);
+      let solveTimeMs = nowMs - d.offsetMin * 60 * 1000;
+
+      for (const chId of d.solves) {
+        const pts = pointsMap[chId] || 100;
+        const solvedAt = new Date(solveTimeMs).toISOString();
+        memoryStore.solves.push({
+          id: memoryStore.nextSolveId++,
+          user_id: user.id,
+          challenge_id: chId,
+          points: pts,
+          solved_at: solvedAt
+        });
+        solveTimeMs += 12 * 60 * 1000;
+      }
     }
   }
-
-  console.log('Seeded demo participants successfully.');
 }
 
 seedDemoDataIfNeeded();
 
 function getCompetitionConfig() {
-  const rows = db.prepare('SELECT key, value FROM competition_config').all();
-  const config = {
-    name: 'KRYPTEIA CTF 2026',
-    club: 'Krypteia — The Cyber Security Technical Club',
-    institution: "St. Peter's Engineering College",
-    status: 'Live',
-    startTime: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-    endTime: new Date(Date.now() + 21 * 3600 * 1000).toISOString()
-  };
+  if (useSqlite) {
+    const rows = sqliteDb.prepare('SELECT key, value FROM competition_config').all();
+    const config = {
+      name: 'KRYPTEIA CTF 2026',
+      club: 'Krypteia — The Cyber Security Technical Club',
+      institution: "St. Peter's Engineering College",
+      status: 'Live',
+      startTime: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+      endTime: new Date(Date.now() + 21 * 3600 * 1000).toISOString()
+    };
 
-  rows.forEach(r => {
-    if (r.key === 'competition_name') config.name = r.value;
-    if (r.key === 'club') config.club = r.value;
-    if (r.key === 'institution') config.institution = r.value;
-    if (r.key === 'status') config.status = r.value;
-    if (r.key === 'start_time') config.startTime = r.value;
-    if (r.key === 'end_time') config.endTime = r.value;
-  });
+    rows.forEach(r => {
+      if (r.key === 'competition_name') config.name = r.value;
+      if (r.key === 'club') config.club = r.value;
+      if (r.key === 'institution') config.institution = r.value;
+      if (r.key === 'status') config.status = r.value;
+      if (r.key === 'start_time') config.startTime = r.value;
+      if (r.key === 'end_time') config.endTime = r.value;
+    });
 
-  return config;
+    return config;
+  } else {
+    return {
+      name: memoryStore.config.competition_name,
+      club: memoryStore.config.club,
+      institution: memoryStore.config.institution,
+      status: memoryStore.config.status,
+      startTime: memoryStore.config.start_time,
+      endTime: memoryStore.config.end_time
+    };
+  }
 }
 
 module.exports = {
-  db,
+  db: sqliteDb,
   createUser,
   authenticateUser,
   createSession,

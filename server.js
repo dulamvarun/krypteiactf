@@ -21,9 +21,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Static file serving
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/attachments', express.static(path.join(__dirname, 'public', 'attachments')));
+// Static file serving with lightweight client-side caching
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
+app.use('/attachments', express.static(path.join(__dirname, 'public', 'attachments'), {
+  maxAge: '2h'
+}));
 
 // Custom Auth Middleware: checks cookie or Bearer token
 function authMiddleware(req, res, next) {
