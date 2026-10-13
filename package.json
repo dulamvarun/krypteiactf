@@ -1,0 +1,20 @@
+{
+  "name": "krypteiactf",
+  "version": "1.0.0",
+  "description": "Krypteia CTF — College Cybersecurity Competition Portal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/api-test.js",
+    "generate-assets": "node scripts/generate-assets.js"
+  },
+  "keywords": ["ctf", "cybersecurity", "st-peters", "krypteia", "security-competition"],
+  "author": "Krypteia Cyber Security Technical Club",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0"
+  }
+}
