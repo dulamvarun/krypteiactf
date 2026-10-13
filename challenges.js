@@ -37,7 +37,8 @@ NUBSWHLD{f43v4u_vk1iw_f1sk3u_xqo0fn3g}
 The transmission logs indicate an encryption key shift of **+3**. Reverse the shift (-3) to recover the original flag.`,
     hints: [
       'Shift each alphabet character backward by 3 positions (N -> K, U -> R...).',
-      'Numbers, braces, and underscores remain untouched.'
+      'Numbers, braces, and underscores remain untouched.',
+      'The flag format is KRYPTEIA{...} without spaces (both KRYPTEIA and KRYPT EIA are accepted).'
     ],
     flag: 'KRYPTEIA{c43s4r_sh1ft_c1ph3r_unl0ck3d}',
     attachments: []
@@ -213,19 +214,74 @@ function getPublicChallenges(userSolves = new Set(), solveCounts = {}) {
 }
 
 /**
+ * Normalizes submitted flags to handle common formatting quirks:
+ * - Space in prefix: "KRYPT EIA{...}" or "KRYPT_EIA{...}" -> "KRYPTEIA{...}"
+ * - Spaces before brace: "KRYPTEIA {" -> "KRYPTEIA{"
+ * - Spaces inside braces: "KRYPTEIA{ flag }" -> "KRYPTEIA{flag}"
+ */
+function normalizeFlag(flag) {
+  if (!flag || typeof flag !== 'string') return '';
+  let str = flag.trim();
+  // Fix accidental split between KRYPT and EIA
+  str = str.replace(/^KRYPT[\s_]+EIA/i, 'KRYPTEIA');
+  // Fix spaces before opening brace
+  str = str.replace(/^([A-Za-z0-9_-]+)\s*\{/, '$1{');
+  // Trim spaces immediately inside braces
+  str = str.replace(/^([A-Za-z0-9_-]+\{)\s*(.*?)\s*(\})$/, '$1$2$3');
+  return str;
+}
+
+/**
  * Validates a submitted flag against the private server-side answer.
+ * Tolerates minor whitespace errors (e.g. "KRYPT EIA{...}").
  */
 function validateFlag(challengeId, submittedFlag) {
   const challenge = CHALLENGE_MAP.get(challengeId);
   if (!challenge) return { found: false };
 
-  const cleanSubmitted = (submittedFlag || '').trim();
-  const cleanExpected = challenge.flag.trim();
+  const rawSubmitted = (submittedFlag || '').trim();
+  const rawExpected = challenge.flag.trim();
 
-  const isCorrect = cleanSubmitted === cleanExpected;
+  // 1. Direct exact match
+  if (rawSubmitted === rawExpected) {
+    return {
+      found: true,
+      isCorrect: true,
+      points: challenge.points,
+      title: challenge.title
+    };
+  }
+
+  // 2. Normalized match (handles "KRYPT EIA{...}", extra spaces, etc.)
+  const normSubmitted = normalizeFlag(rawSubmitted);
+  const normExpected = normalizeFlag(rawExpected);
+
+  if (normSubmitted === normExpected) {
+    return {
+      found: true,
+      isCorrect: true,
+      points: challenge.points,
+      title: challenge.title
+    };
+  }
+
+  // 3. Case-insensitive prefix match with exact inner payload
+  const matchSub = normSubmitted.match(/^([A-Za-z0-9_-]+)\{(.*)\}$/);
+  const matchExp = normExpected.match(/^([A-Za-z0-9_-]+)\{(.*)\}$/);
+  if (matchSub && matchExp) {
+    if (matchSub[1].toUpperCase() === matchExp[1].toUpperCase() && matchSub[2] === matchExp[2]) {
+      return {
+        found: true,
+        isCorrect: true,
+        points: challenge.points,
+        title: challenge.title
+      };
+    }
+  }
+
   return {
     found: true,
-    isCorrect,
+    isCorrect: false,
     points: challenge.points,
     title: challenge.title
   };

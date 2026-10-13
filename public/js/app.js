@@ -627,7 +627,13 @@
     }
 
     const challengeId = state.currentModalChallengeId;
-    const flag = elements.flagInput.value.trim();
+    let flag = elements.flagInput.value.trim();
+
+    // Auto-normalize common space quirks (e.g., "KRYPT EIA{...}" -> "KRYPTEIA{...}")
+    flag = flag.replace(/^KRYPT[\s_]+EIA/i, 'KRYPTEIA')
+               .replace(/^([A-Za-z0-9_-]+)\s*\{/, '$1{')
+               .replace(/^([A-Za-z0-9_-]+\{)\s*(.*?)\s*(\})$/, '$1$2$3');
+    elements.flagInput.value = flag;
 
     if (!flag) {
       showFeedback('Please enter a flag', 'error');

@@ -134,20 +134,35 @@ async function runTests() {
     assert.strictEqual(dupSub.json.alreadySolved, true);
     console.log('  ✓ Duplicate flag solve safely rejected without duplicate points');
 
-    // Test 9: Solve a second challenge (wait 5.1s to respect rate limiter)
-    console.log('[9] Testing second challenge solve (web-01) - waiting for rate limit window...');
+    // Test 9: Flag submission with extra space (e.g. KRYPT EIA{...} from Caesar cipher decoders)
+    console.log('[9] Testing flag submission with extra space: KRYPT EIA{c43s4r_sh1ft_c1ph3r_unl0ck3d}');
     await new Promise(r => setTimeout(r, 5200));
-    const secondSub = await request('/api/submit-flag', {
+    const spaceSub = await request('/api/submit-flag', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: { challengeId: 'crypto-01', flag: 'KRYPT EIA{c43s4r_sh1ft_c1ph3r_unl0ck3d}' }
+    });
+    assert.strictEqual(spaceSub.status, 200);
+    assert.strictEqual(spaceSub.json.success, true);
+    assert.strictEqual(spaceSub.json.pointsAwarded, 100);
+    assert.strictEqual(spaceSub.json.newTotalPoints, 150); // 50 + 100
+    assert.strictEqual(spaceSub.json.solvedCount, 2);
+    console.log('  ✓ Flag with extra space (KRYPT EIA{...}) accepted and awarded 100 points');
+
+    // Test 10: Solve a third challenge (web-01)
+    console.log('[10] Testing third challenge solve (web-01) - waiting for rate limit window...');
+    await new Promise(r => setTimeout(r, 5200));
+    const thirdSub = await request('/api/submit-flag', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
       body: { challengeId: 'web-01', flag: 'KRYPTEIA{h34d3r_sp00f1ng_m4st3r_99}' }
     });
-    assert.strictEqual(secondSub.status, 200);
-    assert.strictEqual(secondSub.json.success, true);
-    assert.strictEqual(secondSub.json.pointsAwarded, 150);
-    assert.strictEqual(secondSub.json.newTotalPoints, 200); // 50 + 150
-    assert.strictEqual(secondSub.json.solvedCount, 2);
-    console.log('  ✓ Second challenge awarded 150 points, total now 200');
+    assert.strictEqual(thirdSub.status, 200);
+    assert.strictEqual(thirdSub.json.success, true);
+    assert.strictEqual(thirdSub.json.pointsAwarded, 150);
+    assert.strictEqual(thirdSub.json.newTotalPoints, 300); // 50 + 100 + 150
+    assert.strictEqual(thirdSub.json.solvedCount, 3);
+    console.log('  ✓ Third challenge awarded 150 points, total now 300');
 
     // Test 10: Leaderboard reflects updated score and ranking
     console.log('[10] Testing leaderboard sorting and current user rank');
@@ -160,10 +175,10 @@ async function runTests() {
     // Find our test user in leaderboard
     const myEntry = lb.find(e => e.username === testUsername);
     assert.ok(myEntry);
-    assert.strictEqual(myEntry.totalPoints, 200);
-    assert.strictEqual(myEntry.solvedCount, 2);
+    assert.strictEqual(myEntry.totalPoints, 300);
+    assert.strictEqual(myEntry.solvedCount, 3);
     assert.strictEqual(myEntry.isCurrentParticipant, true);
-    console.log(`  ✓ Leaderboard accurately shows test user at Rank #${myEntry.rank} with 200 points`);
+    console.log(`  ✓ Leaderboard accurately shows test user at Rank #${myEntry.rank} with 300 points`);
 
     // Test 11: Rules endpoint
     console.log('[11] Testing /api/rules');
