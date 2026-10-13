@@ -1,7 +1,15 @@
+# Dependencies
 node_modules/
+
+# Local CTF SQLite database and journal files
 data/*.db
 data/*.db-wal
 data/*.db-shm
+
+# Logs and environment
 *.log
+.env
+
+# OS metadata
 .DS_Store
 Thumbs.db

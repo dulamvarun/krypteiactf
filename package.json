@@ -1,15 +1,13 @@
 {
-  "name": "krypteiactf",
+  "name": "ctf-15.10",
   "version": "1.0.0",
-  "description": "Krypteia CTF — College Cybersecurity Competition Portal",
-  "main": "server.js",
+  "description": "",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "node tests/api-test.js",
-    "generate-assets": "node scripts/generate-assets.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["ctf", "cybersecurity", "st-peters", "krypteia", "security-competition"],
-  "author": "Krypteia Cyber Security Technical Club",
+  "keywords": [],
+  "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
