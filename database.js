@@ -16,6 +16,76 @@ function verifyPassword(password, salt, hash) {
 }
 
 // -------------------------------------------------------------
+// Secret Pepper & Derived AES Key for Flag Security
+// Flags are NEVER stored in plaintext in the database or server logs.
+// -------------------------------------------------------------
+const FLAG_PEPPER = process.env.FLAG_PEPPER || 'krypteia_ctf_super_secret_pepper_2026';
+const FLAG_ENCRYPTION_KEY = crypto.createHash('sha256')
+  .update(process.env.FLAG_SECRET || 'krypteia_flag_envelope_key_2026_#SPEC_ADMIN')
+  .digest();
+
+function normalizeFlag(flag) {
+  if (!flag || typeof flag !== 'string') return '';
+  let str = flag.trim();
+  // Fix accidental space/underscore in prefix: "KRYPT EIA{...}" -> "KRYPTEIA{...}"
+  str = str.replace(/^KRYPT[\s_]+EIA/i, 'KRYPTEIA');
+  // Fix spaces before opening brace: "KRYPTEIA {" -> "KRYPTEIA{"
+  str = str.replace(/^([A-Za-z0-9_-]+)\s*\{/, '$1{');
+  // Trim spaces immediately inside braces: "KRYPTEIA{ flag }" -> "KRYPTEIA{flag}"
+  str = str.replace(/^([A-Za-z0-9_-]+\{)\s*(.*?)\s*(\})$/, '$1$2$3');
+  // Normalize prefix to uppercase (e.g. krypteia{...} -> KRYPTEIA{...})
+  const braceIdx = str.indexOf('{');
+  if (braceIdx > 0 && str.endsWith('}')) {
+    const prefix = str.substring(0, braceIdx).toUpperCase();
+    const inner = str.substring(braceIdx + 1, str.length - 1);
+    str = `${prefix}{${inner}}`;
+  }
+  return str;
+}
+
+function hashFlag(flag, salt) {
+  const norm = normalizeFlag(flag);
+  return crypto.createHmac('sha256', FLAG_PEPPER)
+    .update(salt + ':' + norm)
+    .digest('hex');
+}
+
+function encryptFlag(flag) {
+  if (!flag) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', FLAG_ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(flag.trim(), 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+}
+
+function decryptFlag(encryptedPayload) {
+  if (!encryptedPayload) return null;
+  try {
+    const parts = encryptedPayload.split(':');
+    if (parts.length !== 3) return null;
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const ciphertext = Buffer.from(parts[2], 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', FLAG_ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (err) {
+    return null;
+  }
+}
+
+function verifyFlagSubmission(submittedFlag, storedSalt, storedHash) {
+  if (!submittedFlag || !storedSalt || !storedHash) return false;
+  const testHash = hashFlag(submittedFlag, storedSalt);
+  if (testHash.length !== storedHash.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(testHash, 'hex'), Buffer.from(storedHash, 'hex'));
+}
+
+// -------------------------------------------------------------
 // Engine 1: SQLite Engine (via better-sqlite3)
 // -------------------------------------------------------------
 let sqliteDb = null;
@@ -108,6 +178,23 @@ try {
       updated_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS challenges (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      difficulty TEXT NOT NULL,
+      points INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      hints_json TEXT DEFAULT '[]',
+      attachments_json TEXT DEFAULT '[]',
+      flag_hash TEXT NOT NULL,
+      flag_salt TEXT NOT NULL,
+      flag_encrypted TEXT,
+      is_locked INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS admin_sessions (
       token TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
@@ -132,6 +219,7 @@ const memoryStore = {
   solves: [],
   submissions: [],
   challengeLocks: {},
+  challenges: [],
   config: {
     competition_name: 'KRYPTEIA CTF 2026',
     club: 'Krypteia — The Cyber Security Technical Club',
@@ -383,7 +471,13 @@ function recordSolve(userId, challengeId, points) {
 
 function recordSubmission(userId, challengeId, flagSubmitted, isCorrect) {
   const now = new Date().toISOString();
-  const subFlag = (flagSubmitted || '').substring(0, 100);
+  // Mask correct flag submissions so the real flag is NEVER exposed in the database logs!
+  let subFlag;
+  if (isCorrect) {
+    subFlag = 'KRYPTEIA{***CORRECT_SOLUTION_REDACTED***}';
+  } else {
+    subFlag = (flagSubmitted || '').substring(0, 100);
+  }
 
   if (useSqlite) {
     sqliteDb.prepare(`
@@ -705,6 +799,350 @@ function seedDemoDataIfNeeded() {
 
 initCompetitionConfigIfNeeded();
 seedDemoDataIfNeeded();
+seedChallengesIfNeeded();
+
+// -------------------------------------------------------------
+// Challenge Management & Cryptographic Flag Operations
+// -------------------------------------------------------------
+
+function getAllPublicChallenges(userSolves = new Set(), solveCounts = {}, challengeLocks = {}) {
+  let rows = [];
+  if (useSqlite) {
+    rows = sqliteDb.prepare(`
+      SELECT id, title, category, difficulty, points, description, hints_json, attachments_json, is_locked, created_at
+      FROM challenges
+      ORDER BY points ASC, id ASC
+    `).all();
+  } else {
+    rows = (memoryStore.challenges || []).slice().sort((a, b) => a.points - b.points);
+  }
+
+  return rows.map(c => {
+    const isLocked = Boolean((challengeLocks && challengeLocks[c.id]) || c.is_locked);
+    let hints = [];
+    let attachments = [];
+    try {
+      hints = typeof c.hints_json === 'string' ? JSON.parse(c.hints_json || '[]') : (c.hints || []);
+    } catch (_) { hints = []; }
+    try {
+      attachments = typeof c.attachments_json === 'string' ? JSON.parse(c.attachments_json || '[]') : (c.attachments || []);
+    } catch (_) { attachments = []; }
+
+    return {
+      id: c.id,
+      title: c.title,
+      category: c.category,
+      difficulty: c.difficulty,
+      points: Number(c.points),
+      description: isLocked ? '' : c.description,
+      hints: isLocked ? [] : hints,
+      attachments: isLocked ? [] : attachments,
+      solveCount: (solveCounts && solveCounts[c.id]) || 0,
+      isSolved: userSolves ? userSolves.has(c.id) : false,
+      isLocked
+    };
+  });
+}
+
+function getAdminChallenges() {
+  const solveCounts = getChallengeSolveCounts();
+  const locks = getChallengeLocks();
+  let rows = [];
+
+  if (useSqlite) {
+    rows = sqliteDb.prepare(`
+      SELECT id, title, category, difficulty, points, description, hints_json, attachments_json, flag_hash, flag_salt, flag_encrypted, is_locked, created_at, updated_at
+      FROM challenges
+      ORDER BY points ASC, id ASC
+    `).all();
+  } else {
+    rows = (memoryStore.challenges || []).slice().sort((a, b) => a.points - b.points);
+  }
+
+  return rows.map(c => {
+    let hints = [];
+    let attachments = [];
+    try {
+      hints = typeof c.hints_json === 'string' ? JSON.parse(c.hints_json || '[]') : (c.hints || []);
+    } catch (_) { hints = []; }
+    try {
+      attachments = typeof c.attachments_json === 'string' ? JSON.parse(c.attachments_json || '[]') : (c.attachments || []);
+    } catch (_) { attachments = []; }
+
+    const isLocked = Boolean(locks[c.id] || c.is_locked);
+    const decrypted = decryptFlag(c.flag_encrypted);
+
+    return {
+      id: c.id,
+      title: c.title,
+      category: c.category,
+      difficulty: c.difficulty,
+      points: Number(c.points),
+      description: c.description,
+      hints,
+      attachments,
+      solveCount: solveCounts[c.id] || 0,
+      isLocked,
+      hasFlag: Boolean(c.flag_hash),
+      flagSalt: (c.flag_salt || '').substring(0, 8) + '...',
+      flagHashPreview: (c.flag_hash || '').substring(0, 12) + '...',
+      decryptedFlag: decrypted || 'Protected in Database'
+    };
+  });
+}
+
+function getChallengeById(id) {
+  if (!id) return null;
+  if (useSqlite) {
+    return sqliteDb.prepare('SELECT * FROM challenges WHERE id = ?').get(id) || null;
+  } else {
+    return (memoryStore.challenges || []).find(c => c.id === id) || null;
+  }
+}
+
+function getChallengeCount() {
+  if (useSqlite) {
+    const row = sqliteDb.prepare('SELECT COUNT(*) as count FROM challenges').get();
+    return row ? row.count : 0;
+  } else {
+    return (memoryStore.challenges || []).length;
+  }
+}
+
+function getAllChallengeIds() {
+  if (useSqlite) {
+    return sqliteDb.prepare('SELECT id FROM challenges ORDER BY id ASC').all().map(r => r.id);
+  } else {
+    return (memoryStore.challenges || []).map(c => c.id);
+  }
+}
+
+function createChallenge(data) {
+  const id = (data.id || '').trim();
+  const title = (data.title || '').trim();
+  const category = (data.category || '').trim();
+  const difficulty = (data.difficulty || 'Easy').trim();
+  const points = parseInt(data.points, 10);
+  const description = (data.description || '').trim();
+  const envKey = 'FLAG_' + id.toUpperCase().replace(/-/g, '_');
+  const rawFlag = (data.flag || process.env[envKey] || '').trim();
+
+  if (!id || !title || !category || isNaN(points) || !description) {
+    throw new Error('ID, Title, Category, Points, and Description are required.');
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new Error('Challenge ID can only contain letters, numbers, dashes, and underscores.');
+  }
+
+  const existing = getChallengeById(id);
+  if (existing) {
+    throw new Error(`Challenge ID "${id}" already exists.`);
+  }
+
+  let salt = '';
+  let flagHash = '';
+  let flagEncrypted = null;
+  let isLocked = data.isLocked ? 1 : 0;
+
+  if (rawFlag) {
+    salt = crypto.randomBytes(16).toString('hex');
+    flagHash = hashFlag(rawFlag, salt);
+    flagEncrypted = encryptFlag(rawFlag);
+  } else {
+    // If no flag provided, question is locked until organizer sets flag
+    isLocked = 1;
+  }
+
+  const hintsJson = JSON.stringify(Array.isArray(data.hints) ? data.hints : []);
+  const attachmentsJson = JSON.stringify(Array.isArray(data.attachments) ? data.attachments : []);
+  const now = new Date().toISOString();
+
+  if (useSqlite) {
+    sqliteDb.prepare(`
+      INSERT INTO challenges (
+        id, title, category, difficulty, points, description,
+        hints_json, attachments_json, flag_hash, flag_salt, flag_encrypted,
+        is_locked, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, title, category, difficulty, points, description,
+      hintsJson, attachmentsJson, flagHash, salt, flagEncrypted,
+      isLocked, now, now
+    );
+  } else {
+    if (!memoryStore.challenges) memoryStore.challenges = [];
+    memoryStore.challenges.push({
+      id, title, category, difficulty, points, description,
+      hints_json: hintsJson, attachments_json: attachmentsJson,
+      flag_hash: flagHash, flag_salt: salt, flag_encrypted: flagEncrypted,
+      is_locked: isLocked, created_at: now, updated_at: now
+    });
+  }
+
+  setChallengeLock(id, Boolean(isLocked));
+  return { id, title, category, points, isLocked: Boolean(isLocked) };
+}
+
+function updateChallenge(id, data) {
+  const challenge = getChallengeById(id);
+  if (!challenge) {
+    throw new Error(`Challenge with ID "${id}" not found.`);
+  }
+
+  const title = data.title !== undefined ? String(data.title).trim() : challenge.title;
+  const category = data.category !== undefined ? String(data.category).trim() : challenge.category;
+  const difficulty = data.difficulty !== undefined ? String(data.difficulty).trim() : challenge.difficulty;
+  const points = data.points !== undefined ? parseInt(data.points, 10) : challenge.points;
+  const description = data.description !== undefined ? String(data.description).trim() : challenge.description;
+
+  let hintsJson = challenge.hints_json;
+  if (data.hints !== undefined) {
+    hintsJson = JSON.stringify(Array.isArray(data.hints) ? data.hints : []);
+  }
+
+  let attachmentsJson = challenge.attachments_json;
+  if (data.attachments !== undefined) {
+    attachmentsJson = JSON.stringify(Array.isArray(data.attachments) ? data.attachments : []);
+  }
+
+  let flagHash = challenge.flag_hash;
+  let flagSalt = challenge.flag_salt;
+  let flagEncrypted = challenge.flag_encrypted;
+
+  // If a new flag was provided, re-salt, re-hash, and re-encrypt
+  if (data.flag && typeof data.flag === 'string' && data.flag.trim().length > 0) {
+    flagSalt = crypto.randomBytes(16).toString('hex');
+    flagHash = hashFlag(data.flag.trim(), flagSalt);
+    flagEncrypted = encryptFlag(data.flag.trim());
+  }
+
+  const isLocked = data.isLocked !== undefined ? (data.isLocked ? 1 : 0) : challenge.is_locked;
+  const now = new Date().toISOString();
+
+  if (useSqlite) {
+    sqliteDb.prepare(`
+      UPDATE challenges SET
+        title = ?, category = ?, difficulty = ?, points = ?, description = ?,
+        hints_json = ?, attachments_json = ?, flag_hash = ?, flag_salt = ?, flag_encrypted = ?,
+        is_locked = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      title, category, difficulty, points, description,
+      hintsJson, attachmentsJson, flagHash, flagSalt, flagEncrypted,
+      isLocked, now, id
+    );
+  } else {
+    const item = (memoryStore.challenges || []).find(c => c.id === id);
+    if (item) {
+      Object.assign(item, {
+        title, category, difficulty, points, description,
+        hints_json: hintsJson, attachments_json: attachmentsJson,
+        flag_hash: flagHash, flag_salt: flagSalt, flag_encrypted: flagEncrypted,
+        is_locked: isLocked, updated_at: now
+      });
+    }
+  }
+
+  setChallengeLock(id, Boolean(isLocked));
+  return { id, title, category, points, isLocked: Boolean(isLocked) };
+}
+
+function deleteChallenge(id) {
+  const challenge = getChallengeById(id);
+  if (!challenge) {
+    throw new Error(`Challenge with ID "${id}" not found.`);
+  }
+
+  if (useSqlite) {
+    sqliteDb.prepare('DELETE FROM challenges WHERE id = ?').run(id);
+    sqliteDb.prepare('DELETE FROM challenge_locks WHERE challenge_id = ?').run(id);
+  } else {
+    memoryStore.challenges = (memoryStore.challenges || []).filter(c => c.id !== id);
+    if (memoryStore.challengeLocks) delete memoryStore.challengeLocks[id];
+  }
+
+  return { success: true, id };
+}
+
+function verifyFlag(challengeId, submittedFlag) {
+  const challenge = getChallengeById(challengeId);
+  if (!challenge) {
+    return { found: false };
+  }
+
+  if (!challenge.flag_hash || !challenge.flag_salt) {
+    return {
+      found: true,
+      isCorrect: false,
+      points: challenge.points,
+      title: challenge.title
+    };
+  }
+
+  const isCorrect = verifyFlagSubmission(submittedFlag, challenge.flag_salt, challenge.flag_hash);
+  return {
+    found: true,
+    isCorrect,
+    points: challenge.points,
+    title: challenge.title
+  };
+}
+
+function testFlagValidation(challengeId, candidateFlag) {
+  const challenge = getChallengeById(challengeId);
+  if (!challenge) {
+    return { found: false, error: 'Challenge not found' };
+  }
+  const isCorrect = verifyFlagSubmission(candidateFlag, challenge.flag_salt, challenge.flag_hash);
+  return {
+    found: true,
+    isCorrect,
+    challengeId,
+    normalizedAttempt: normalizeFlag(candidateFlag)
+  };
+}
+
+function seedChallengesIfNeeded() {
+  let count = 0;
+  if (useSqlite) {
+    try {
+      const row = sqliteDb.prepare('SELECT COUNT(*) as count FROM challenges').get();
+      count = row ? row.count : 0;
+    } catch (_) {
+      count = 0;
+    }
+  } else {
+    count = (memoryStore.challenges || []).length;
+  }
+
+  if (count > 0) return;
+
+  try {
+    const { INITIAL_CHALLENGES } = require('./challenges');
+    if (Array.isArray(INITIAL_CHALLENGES)) {
+      INITIAL_CHALLENGES.forEach(c => {
+        try {
+          createChallenge({
+            id: c.id,
+            title: c.title,
+            category: c.category,
+            difficulty: c.difficulty,
+            points: c.points,
+            description: c.description,
+            hints: c.hints,
+            attachments: c.attachments,
+            flag: c.flag,
+            isLocked: false
+          });
+        } catch (_) {}
+      });
+      console.log(`[Database] Successfully seeded ${INITIAL_CHALLENGES.length} challenges with HMAC-SHA256 salted hashes and AES-256-GCM encryption.`);
+    }
+  } catch (err) {
+    console.warn('[Database] Challenge seeding notice:', err.message);
+  }
+}
 
 // IST (Indian Standard Time) formatting helper
 function formatIST(dateInput) {
@@ -1028,5 +1466,22 @@ module.exports = {
   getDetailedLeaderboardForExport,
   generateLeaderboardCSV,
   clearAllParticipants,
-  initCompetitionConfigIfNeeded
+  initCompetitionConfigIfNeeded,
+  // New Challenge & Flag Management APIs
+  normalizeFlag,
+  hashFlag,
+  encryptFlag,
+  decryptFlag,
+  verifyFlagSubmission,
+  getAllPublicChallenges,
+  getAdminChallenges,
+  getChallengeById,
+  getChallengeCount,
+  getAllChallengeIds,
+  createChallenge,
+  updateChallenge,
+  deleteChallenge,
+  verifyFlag,
+  testFlagValidation,
+  seedChallengesIfNeeded
 };

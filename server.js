@@ -65,11 +65,13 @@ app.get('/api/diagnostics/vault-status', (req, res) => {
   const debugQuery = req.query.debug;
 
   if (roleHeader === 'SecurityAdmin' || debugQuery === 'admin_override') {
+    const ch = db.getChallengeById('web-01');
+    const flag = ch ? db.decryptFlag(ch.flag_encrypted) : null;
     return res.json({
       status: 'authorized',
       access_level: 'Administrator',
       message: 'Access granted to internal security telemetry.',
-      flag: 'KRYPTEIA{h34d3r_sp00f1ng_m4st3r_99}',
+      flag: flag || null,
       timestamp: new Date().toISOString()
     });
   }
@@ -86,11 +88,13 @@ app.get('/api/diagnostics/cookie-vault', (req, res) => {
   const cookieRole = req.cookies['krypteia_role'];
 
   if (cookieRole === 'cyber_commander') {
+    const ch = db.getChallengeById('web-02');
+    const flag = ch ? db.decryptFlag(ch.flag_encrypted) : null;
     return res.json({
       status: 'unlocked',
       role: 'cyber_commander',
       message: 'Authentication bypass successful. Vault unlocked.',
-      flag: 'KRYPTEIA{c00k13_m4n1pul4t10n_succ3ss}',
+      flag: flag || null,
       timestamp: new Date().toISOString()
     });
   }
@@ -107,7 +111,7 @@ app.get('/api/config', (req, res) => {
   const config = db.getCompetitionConfig();
   res.json({
     ...config,
-    totalChallenges: CHALLENGES.length
+    totalChallenges: db.getChallengeCount()
   });
 });
 
@@ -430,19 +434,8 @@ app.get('/api/admin/status', (req, res) => {
   }
 
   const config = db.getCompetitionConfig();
-  const locks = db.getChallengeLocks();
   const solveCounts = db.getChallengeSolveCounts();
-
-  const challengeList = CHALLENGES.map(c => ({
-    id: c.id,
-    title: c.title,
-    category: c.category,
-    difficulty: c.difficulty,
-    points: c.points,
-    solveCount: solveCounts[c.id] || 0,
-    isLocked: Boolean(locks[c.id])
-  }));
-
+  const challengeList = db.getAdminChallenges();
   const leaderboard = db.getDetailedLeaderboardForExport();
 
   res.json({
@@ -503,7 +496,7 @@ app.post('/api/admin/challenge-lock', adminAuthMiddleware, (req, res) => {
 // 6. Bulk Lock / Unlock All Challenges
 app.post('/api/admin/challenge-lock-all', adminAuthMiddleware, (req, res) => {
   const { isLocked } = req.body;
-  const allIds = CHALLENGES.map(c => c.id);
+  const allIds = db.getAllChallengeIds();
   const locks = db.setAllChallengeLocks(allIds, Boolean(isLocked));
   res.json({
     success: true,
@@ -530,6 +523,62 @@ app.post('/api/admin/reset-leaderboard', adminAuthMiddleware, (req, res) => {
   res.json({
     success: true,
     message: 'Leaderboard and participant accounts cleared successfully.'
+  });
+});
+
+// --- Dynamic Challenge & Flag Management APIs ---
+
+// 9. Create New Challenge (Stores flag as salted HMAC + AES-256 encrypted)
+app.post('/api/admin/challenges', adminAuthMiddleware, (req, res) => {
+  try {
+    const created = db.createChallenge(req.body);
+    res.json({
+      success: true,
+      message: `Challenge "${created.title}" (${created.id}) created successfully with secure salted HMAC flag storage!`,
+      challenge: created
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 10. Update Challenge
+app.put('/api/admin/challenges/:id', adminAuthMiddleware, (req, res) => {
+  try {
+    const updated = db.updateChallenge(req.params.id, req.body);
+    res.json({
+      success: true,
+      message: `Challenge "${updated.title}" (${updated.id}) updated successfully!`,
+      challenge: updated
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 11. Delete Challenge
+app.delete('/api/admin/challenges/:id', adminAuthMiddleware, (req, res) => {
+  try {
+    db.deleteChallenge(req.params.id);
+    res.json({
+      success: true,
+      message: `Challenge "${req.params.id}" has been deleted successfully.`
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 12. Sandbox Test Flag Validation
+app.post('/api/admin/test-flag', adminAuthMiddleware, (req, res) => {
+  const { challengeId, flag } = req.body;
+  if (!challengeId || !flag) {
+    return res.status(400).json({ error: 'challengeId and flag are required' });
+  }
+  const result = db.testFlagValidation(challengeId, flag);
+  res.json({
+    success: true,
+    ...result
   });
 });
 

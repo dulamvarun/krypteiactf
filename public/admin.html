@@ -227,23 +227,26 @@
         </div>
       </section>
 
-      <!-- SECTION 2: DYNAMIC QUESTION LOCK & UNLOCK -->
-      <section class="admin-card" aria-label="Dynamic Challenge Locks">
+      <!-- SECTION 2: DYNAMIC CHALLENGE & CRYPTOGRAPHIC FLAG MANAGER -->
+      <section class="admin-card" aria-label="Dynamic Challenge & Flag Manager">
         <div class="card-header">
           <div class="card-header-left">
-            <span style="font-size: 1.4rem;">🔐</span>
+            <span style="font-size: 1.4rem;">🛡️</span>
             <div>
-              <h2 class="card-title">Dynamic Question Locks</h2>
-              <p class="card-subtitle">Lock and unlock challenges in real-time. Locked challenges cannot be solved or accessed by participants.</p>
+              <h2 class="card-title">Challenge & Cryptographic Flag Manager</h2>
+              <p class="card-subtitle">Flags are protected with salted HMAC-SHA256 & AES-256-GCM envelope in SQLite. Create, edit, and test live challenges without restarting the server.</p>
             </div>
           </div>
 
           <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
+            <button type="button" class="btn btn-green btn-sm" id="btn-add-challenge">
+              ➕ Add New Challenge
+            </button>
             <button type="button" class="btn btn-outline-green btn-sm" id="btn-unlock-all">
-              🔓 Unlock All Questions
+              🔓 Unlock All
             </button>
             <button type="button" class="btn btn-danger btn-sm" id="btn-lock-all">
-              🔒 Lock All Questions
+              🔒 Lock All
             </button>
           </div>
         </div>
@@ -259,6 +262,7 @@
                   <th>Difficulty</th>
                   <th>Points</th>
                   <th>Solves</th>
+                  <th>Flag Security (Salted HMAC)</th>
                   <th>Current State</th>
                   <th style="text-align: right;">Action</th>
                 </tr>
@@ -349,6 +353,125 @@
     </div>
 
   </main>
+
+  <!-- Challenge & Secret Flag Editor Modal -->
+  <div class="admin-modal-overlay" id="modal-challenge-editor" style="display: none;" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="admin-modal-card">
+      <div class="admin-modal-header">
+        <div>
+          <span class="badge-tag" id="editor-modal-badge">DATABASE CHALLENGE EDITOR</span>
+          <h2 class="admin-modal-title" id="editor-modal-title">Create New Challenge</h2>
+        </div>
+        <button type="button" class="modal-close-btn" id="editor-modal-close" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="admin-modal-body">
+        <div id="editor-feedback" class="feedback-msg" style="display: none; margin-bottom: 1rem;"></div>
+
+        <form id="challenge-editor-form">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="ch-edit-id" class="form-label">Challenge ID (Unique Slug) *</label>
+              <input type="text" id="ch-edit-id" class="form-input mono" placeholder="e.g. web-03, crypto-03" required pattern="[a-zA-Z0-9_\-]+" />
+              <small class="form-hint">Letters, numbers, hyphens, and underscores only.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="ch-edit-category" class="form-label">Category *</label>
+              <select id="ch-edit-category" class="form-input" required>
+                <option value="Web Security">Web Security</option>
+                <option value="Cryptography">Cryptography</option>
+                <option value="Digital Forensics">Digital Forensics</option>
+                <option value="Network Security">Network Security</option>
+                <option value="Reverse Engineering">Reverse Engineering</option>
+                <option value="OSINT">OSINT</option>
+                <option value="General Skills">General Skills</option>
+                <option value="Binary Exploitation">Binary Exploitation</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row-3">
+            <div class="form-group" style="flex: 2;">
+              <label for="ch-edit-title" class="form-label">Challenge Title *</label>
+              <input type="text" id="ch-edit-title" class="form-input" placeholder="e.g. The Quantum Handshake" required />
+            </div>
+
+            <div class="form-group">
+              <label for="ch-edit-difficulty" class="form-label">Difficulty *</label>
+              <select id="ch-edit-difficulty" class="form-input" required>
+                <option value="Easy">Easy</option>
+                <option value="Medium" selected>Medium</option>
+                <option value="Hard">Hard</option>
+                <option value="Insane">Insane</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="ch-edit-points" class="form-label">Points *</label>
+              <input type="number" id="ch-edit-points" class="form-input mono" min="10" max="1000" step="10" value="150" required />
+            </div>
+          </div>
+
+          <div class="form-group highlight-box">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label for="ch-edit-flag" class="form-label" style="margin-bottom: 0;">
+                🔑 Secret Flag (Auto-Hashed & Salted in Database) *
+              </label>
+              <span class="crypto-shield-badge">🔒 HMAC-SHA256 + AES-256</span>
+            </div>
+            <input type="text" id="ch-edit-flag" class="form-input mono" placeholder="KRYPTEIA{your_secret_flag_here}" />
+            <small class="form-hint" id="flag-input-hint">
+              When editing, leave empty to keep existing flag, or enter a new flag to re-hash and re-encrypt.
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="ch-edit-desc" class="form-label">Challenge Description & Briefing *</label>
+            <textarea id="ch-edit-desc" class="form-input mono" rows="4" placeholder="Detailed mission briefing. Markdown formatting is supported..." required></textarea>
+          </div>
+
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="ch-edit-hints" class="form-label">Hints (One per line)</label>
+              <textarea id="ch-edit-hints" class="form-input mono" rows="3" placeholder="Hint 1: Inspect the HTTP headers&#10;Hint 2: CyberChef from-hex"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="ch-edit-attachments" class="form-label">Attachments (JSON array)</label>
+              <textarea id="ch-edit-attachments" class="form-input mono" rows="3" placeholder='[{"name": "file.png", "url": "/attachments/file.png", "size": "15 KB"}]'></textarea>
+            </div>
+          </div>
+
+          <div class="form-group" style="display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem;">
+            <input type="checkbox" id="ch-edit-locked" style="width: 18px; height: 18px; cursor: pointer;" />
+            <label for="ch-edit-locked" style="font-size: 0.88rem; cursor: pointer; color: var(--text-primary);">
+              Lock this challenge (Hidden from participants until unlocked)
+            </label>
+          </div>
+
+          <!-- Sandbox Flag Validation Tester -->
+          <div class="test-flag-sandbox" id="test-sandbox-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--accent-cyan);">🧪 Test Flag Sandbox (Pre-flight Verification)</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="test-flag-input" class="form-input mono" placeholder="Enter test attempt to verify..." style="font-size: 0.85rem;" />
+              <button type="button" class="btn btn-outline-green btn-sm" id="btn-test-flag-action">
+                Verify Attempt
+              </button>
+            </div>
+            <div id="test-flag-feedback" style="display: none; margin-top: 6px; font-size: 0.82rem; font-family: var(--font-mono);"></div>
+          </div>
+
+          <div class="admin-modal-footer">
+            <button type="button" class="btn btn-outline" id="editor-modal-cancel">Cancel</button>
+            <button type="submit" class="btn btn-green" id="editor-modal-save">💾 Save Challenge to Database</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
 
   <!-- Admin Toast Container -->
   <div class="admin-toast-container" id="admin-toast-container"></div>

@@ -1,5 +1,16 @@
 const fs = require('fs');
 const path = require('path');
+const db = require('../database');
+
+function getChallengeFlag(id) {
+  try {
+    const ch = db.getChallengeById(id);
+    if (ch && ch.flag_encrypted) {
+      return db.decryptFlag(ch.flag_encrypted) || '';
+    }
+  } catch (_) {}
+  return '';
+}
 
 const attachmentsDir = path.join(__dirname, '..', 'public', 'attachments');
 if (!fs.existsSync(attachmentsDir)) {
@@ -28,14 +39,15 @@ function generatePcap() {
     0x08, 0x00
   ]);
 
-  // Payload: HTTP response containing flag
+  // Payload: HTTP response containing flag dynamically from DB
+  const netsecFlag = getChallengeFlag('netsec-01');
   const httpPayload = Buffer.from(
     'HTTP/1.1 200 OK\r\n' +
     'Server: Krypteia-SecVault/1.4\r\n' +
     'Date: Tue, 13 Oct 2026 15:30:00 GMT\r\n' +
     'Content-Type: application/json\r\n' +
     'Connection: close\r\n\r\n' +
-    '{"service":"Krypteia NetSec Diagnostic","intercepted_key":"KRYPTEIA{p4ck3t_sn1ff3r_pr0t0c0l_337}","status":"exfiltrated"}\n'
+    JSON.stringify({ service: 'Krypteia NetSec Diagnostic', intercepted_key: netsecFlag, status: 'exfiltrated' }) + '\n'
   );
 
   // IPv4 header (20 bytes)
@@ -144,8 +156,9 @@ function generateStegoPng() {
   const authorData = Buffer.from('Author\0Krypteia Cyber Security Club - St. Peter\'s Engineering College', 'latin1');
   const textChunk1 = makeChunk('tEXt', authorData);
 
-  // tEXt chunk 2: Forensics Secret Flag!
-  const flagData = Buffer.from('Description\0FORENSICS_RECORD: Flag is KRYPTEIA{m3t4d4t4_n3v3r_l13s_7812}', 'latin1');
+  // tEXt chunk 2: Forensics Secret Flag from DB
+  const forensicsFlag = getChallengeFlag('forensics-01');
+  const flagData = Buffer.from(`Description\0FORENSICS_RECORD: Flag is ${forensicsFlag}`, 'latin1');
   const textChunk2 = makeChunk('tEXt', flagData);
 
   // tEXt chunk 3: Additional hint
@@ -185,7 +198,7 @@ function generateStegoPng() {
 // 3. Generate XOR encrypted stream
 function generateXorStream() {
   const hexPath = path.join(attachmentsDir, 'xor_stream.hex');
-  const plaintext = 'KRYPTEIA{x0r_c1ph3r_str34m_d3c0d3d_941}';
+  const plaintext = getChallengeFlag('crypto-02');
   const key = 'KRYPT';
   const ciphertextBytes = [];
 
@@ -248,7 +261,9 @@ function generateEvidenceImage() {
   const ihdrChunk = makeChunk('IHDR', ihdrData);
 
   // tEXt chunk: Flag fragment 1 hidden in Comment metadata
-  const metaData = Buffer.from('Comment\0KRYPTEIA{m3t4d4t4_', 'latin1');
+  const forensics2Flag = getChallengeFlag('forensics-02');
+  const frag1 = forensics2Flag ? forensics2Flag.substring(0, 18) : '';
+  const metaData = Buffer.from(`Comment\0${frag1}`, 'latin1');
   const textChunk = makeChunk('tEXt', metaData);
 
   // tEXt chunk: Innocent-looking author info
@@ -276,7 +291,8 @@ function generateEvidenceImage() {
   const iendChunk = makeChunk('IEND', Buffer.alloc(0));
 
   // Append fragment 2 AFTER IEND as hidden embedded artifact
-  const hiddenArtifact = Buffer.from('\n--- EMBEDDED ARTIFACT ---\nRecovered from disk sector 0x4F:\nd03sn7_l13}\n--- END ARTIFACT ---\n');
+  const frag2 = forensics2Flag ? forensics2Flag.substring(18) : '';
+  const hiddenArtifact = Buffer.from(`\n--- EMBEDDED ARTIFACT ---\nRecovered from disk sector 0x4F:\n${frag2}\n--- END ARTIFACT ---\n`);
 
   const fullPng = Buffer.concat([signature, ihdrChunk, authorChunk, textChunk, idatChunk, iendChunk, hiddenArtifact]);
   fs.writeFileSync(pngPath, fullPng);

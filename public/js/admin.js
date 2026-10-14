@@ -12,7 +12,9 @@
     challenges: [],
     leaderboard: [],
     pollTimer: null,
-    clockTimer: null
+    clockTimer: null,
+    editingChallengeId: null,
+    revealedFlags: {}
   };
 
   // DOM Elements
@@ -64,8 +66,34 @@
 
     // Challenges Section
     el.challengesTableBody = document.getElementById('challenges-table-body');
+    el.btnAddChallenge = document.getElementById('btn-add-challenge');
     el.btnUnlockAll = document.getElementById('btn-unlock-all');
     el.btnLockAll = document.getElementById('btn-lock-all');
+
+    // Challenge Modal Elements
+    el.modalChallengeEditor = document.getElementById('modal-challenge-editor');
+    el.editorModalTitle = document.getElementById('editor-modal-title');
+    el.editorModalBadge = document.getElementById('editor-modal-badge');
+    el.editorModalClose = document.getElementById('editor-modal-close');
+    el.editorModalCancel = document.getElementById('editor-modal-cancel');
+    el.challengeEditorForm = document.getElementById('challenge-editor-form');
+    el.chEditId = document.getElementById('ch-edit-id');
+    el.chEditCategory = document.getElementById('ch-edit-category');
+    el.chEditTitle = document.getElementById('ch-edit-title');
+    el.chEditDifficulty = document.getElementById('ch-edit-difficulty');
+    el.chEditPoints = document.getElementById('ch-edit-points');
+    el.chEditFlag = document.getElementById('ch-edit-flag');
+    el.chEditDesc = document.getElementById('ch-edit-desc');
+    el.chEditHints = document.getElementById('ch-edit-hints');
+    el.chEditAttachments = document.getElementById('ch-edit-attachments');
+    el.chEditLocked = document.getElementById('ch-edit-locked');
+    el.flagInputHint = document.getElementById('flag-input-hint');
+    el.editorFeedback = document.getElementById('editor-feedback');
+    el.editorModalSave = document.getElementById('editor-modal-save');
+    el.testSandboxCard = document.getElementById('test-sandbox-card');
+    el.testFlagInput = document.getElementById('test-flag-input');
+    el.btnTestFlagAction = document.getElementById('btn-test-flag-action');
+    el.testFlagFeedback = document.getElementById('test-flag-feedback');
 
     // Leaderboard Section
     el.leaderboardTableBody = document.getElementById('leaderboard-table-body');
@@ -102,6 +130,23 @@
     if (el.preset15m) el.preset15m.addEventListener('click', () => applyPresetOffset(15 * 60));
     if (el.preset30m) el.preset30m.addEventListener('click', () => applyPresetOffset(30 * 60));
     if (el.preset1h) el.preset1h.addEventListener('click', () => applyPresetOffset(60 * 60));
+
+    // Challenge Modal Actions
+    if (el.btnAddChallenge) {
+      el.btnAddChallenge.addEventListener('click', openCreateChallengeModal);
+    }
+    if (el.editorModalClose) {
+      el.editorModalClose.addEventListener('click', closeChallengeModal);
+    }
+    if (el.editorModalCancel) {
+      el.editorModalCancel.addEventListener('click', closeChallengeModal);
+    }
+    if (el.challengeEditorForm) {
+      el.challengeEditorForm.addEventListener('submit', handleChallengeFormSubmit);
+    }
+    if (el.btnTestFlagAction) {
+      el.btnTestFlagAction.addEventListener('click', handleTestFlagAction);
+    }
 
     // Bulk challenge actions
     if (el.btnUnlockAll) {
@@ -485,13 +530,14 @@
   }
 
   // --- Dynamic Challenge Lock / Unlock ---
+  // --- Dynamic Challenge & Cryptographic Flag Management ---
   function renderChallengesTable() {
     if (!el.challengesTableBody) return;
 
     el.challengesTableBody.innerHTML = '';
 
     if (state.challenges.length === 0) {
-      el.challengesTableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 2rem; color: var(--text-muted);">No challenges loaded.</td></tr>`;
+      el.challengesTableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2.5rem; color: var(--text-muted);">No challenges stored in database. Click "+ Add New Challenge" to create one.</td></tr>`;
       return;
     }
 
@@ -499,6 +545,7 @@
       const tr = document.createElement('tr');
       const isLocked = Boolean(c.isLocked);
       const diffClass = `diff-${(c.difficulty || 'easy').toLowerCase()}`;
+      const isRevealed = Boolean(state.revealedFlags[c.id]);
 
       tr.innerHTML = `
         <td><span class="challenge-id-badge">${escapeHtml(c.id)}</span></td>
@@ -508,74 +555,307 @@
         <td><span class="mono" style="color: var(--accent-green); font-weight: 600;">${c.points} PTS</span></td>
         <td><span class="mono">${c.solveCount || 0} solves</span></td>
         <td>
+          <div class="flag-protected-pill">
+            <span class="mono" id="flag-text-${c.id}" style="${isRevealed ? 'color: var(--accent-green); font-weight: 600;' : 'color: var(--text-muted);'}">
+              ${isRevealed ? escapeHtml(c.decryptedFlag || 'None') : '••••••••••••••'}
+            </span>
+            <button type="button" class="flag-reveal-btn" id="btn-reveal-${c.id}" title="${isRevealed ? 'Hide Flag' : 'Reveal Decrypted Flag'}">
+              ${isRevealed ? '🙈' : '👁️'}
+            </button>
+          </div>
+        </td>
+        <td>
           <span class="status-pill ${isLocked ? 'locked' : 'unlocked'}" id="status-pill-${c.id}">
             ${isLocked ? '🔒 LOCKED' : '🔓 UNLOCKED'}
           </span>
         </td>
         <td style="text-align: right;">
-          <button 
-            type="button" 
-            class="btn ${isLocked ? 'btn-green' : 'btn-danger'} btn-sm" 
-            id="toggle-btn-${c.id}"
-          >
-            ${isLocked ? '🔓 Unlock Question' : '🔒 Lock Question'}
-          </button>
+          <div class="action-buttons-group">
+            <button 
+              type="button" 
+              class="btn btn-outline btn-sm" 
+              id="edit-btn-${c.id}"
+              title="Edit Challenge Details & Flag"
+            >
+              ✏️ Edit
+            </button>
+            <button 
+              type="button" 
+              class="btn ${isLocked ? 'btn-green' : 'btn-danger'} btn-sm" 
+              id="toggle-btn-${c.id}"
+            >
+              ${isLocked ? '🔓 Unlock' : '🔒 Lock'}
+            </button>
+            <button 
+              type="button" 
+              class="btn btn-danger btn-sm" 
+              id="del-btn-${c.id}"
+              title="Delete Challenge"
+              style="padding: 0.25rem 0.5rem;"
+            >
+              🗑️
+            </button>
+          </div>
         </td>
       `;
 
+      // Event Listeners for row actions
+      const revealBtn = tr.querySelector(`#btn-reveal-${c.id}`);
+      if (revealBtn) {
+        revealBtn.addEventListener('click', () => {
+          state.revealedFlags[c.id] = !state.revealedFlags[c.id];
+          renderChallengesTable();
+        });
+      }
+
+      const editBtn = tr.querySelector(`#edit-btn-${c.id}`);
+      if (editBtn) {
+        editBtn.addEventListener('click', () => openEditChallengeModal(c.id));
+      }
+
       const toggleBtn = tr.querySelector(`#toggle-btn-${c.id}`);
-      toggleBtn.addEventListener('click', () => handleToggleLock(c.id, !isLocked));
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => handleToggleLock(c.id, !isLocked));
+      }
+
+      const delBtn = tr.querySelector(`#del-btn-${c.id}`);
+      if (delBtn) {
+        delBtn.addEventListener('click', () => handleDeleteChallenge(c.id, c.title));
+      }
 
       el.challengesTableBody.appendChild(tr);
     });
   }
 
-  async function handleToggleLock(challengeId, newLockState) {
-    const btn = document.getElementById(`toggle-btn-${challengeId}`);
-    if (btn) btn.disabled = true;
+  // --- Modal Open / Close Handlers ---
+  function openCreateChallengeModal() {
+    state.editingChallengeId = null;
+    if (el.challengeEditorForm) el.challengeEditorForm.reset();
 
-    try {
-      const data = await adminFetch('/api/admin/challenge-lock', {
-        method: 'POST',
-        body: { challengeId, isLocked: newLockState }
-      });
+    if (el.editorModalTitle) el.editorModalTitle.textContent = 'Create New Challenge';
+    if (el.editorModalBadge) el.editorModalBadge.textContent = 'DATABASE CHALLENGE CREATION';
+    if (el.chEditId) {
+      el.chEditId.disabled = false;
+      el.chEditId.value = '';
+    }
+    if (el.chEditFlag) {
+      el.chEditFlag.required = true;
+      el.chEditFlag.placeholder = 'KRYPTEIA{...}';
+    }
+    if (el.flagInputHint) {
+      el.flagInputHint.textContent = 'Enter the secret flag. It will be salted, hashed with HMAC-SHA256, and AES-256 encrypted before saving.';
+    }
+    if (el.testSandboxCard) el.testSandboxCard.style.display = 'none';
+    if (el.editorFeedback) el.editorFeedback.style.display = 'none';
 
-      const ch = state.challenges.find(item => item.id === challengeId);
-      if (ch) {
-        ch.isLocked = newLockState;
-      }
-
-      showToast(data.message, 'success');
-      renderChallengesTable();
-      updateMetricRatio();
-    } catch (err) {
-      showToast(err.message, 'error');
-      if (btn) btn.disabled = false;
+    if (el.modalChallengeEditor) {
+      el.modalChallengeEditor.style.display = 'flex';
     }
   }
 
-  async function handleBulkLock(isLocked) {
-    const actionText = isLocked ? 'lock ALL questions' : 'unlock ALL questions';
-    if (!confirm(`Are you sure you want to ${actionText}?`)) {
+  function openEditChallengeModal(challengeId) {
+    const c = state.challenges.find(item => item.id === challengeId);
+    if (!c) {
+      showToast('Challenge not found', 'error');
+      return;
+    }
+
+    state.editingChallengeId = c.id;
+    if (el.challengeEditorForm) el.challengeEditorForm.reset();
+
+    if (el.editorModalTitle) el.editorModalTitle.textContent = `Edit Challenge: ${c.title}`;
+    if (el.editorModalBadge) el.editorModalBadge.textContent = 'DATABASE CHALLENGE EDITOR';
+
+    if (el.chEditId) {
+      el.chEditId.value = c.id;
+      el.chEditId.disabled = true;
+    }
+    if (el.chEditCategory) el.chEditCategory.value = c.category;
+    if (el.chEditTitle) el.chEditTitle.value = c.title;
+    if (el.chEditDifficulty) el.chEditDifficulty.value = c.difficulty;
+    if (el.chEditPoints) el.chEditPoints.value = c.points;
+    if (el.chEditFlag) {
+      el.chEditFlag.value = '';
+      el.chEditFlag.required = false;
+      el.chEditFlag.placeholder = c.decryptedFlag || 'Leave empty to keep existing flag';
+    }
+    if (el.flagInputHint) {
+      el.flagInputHint.innerHTML = `Current Stored Flag: <strong style="color:var(--accent-green);">${escapeHtml(c.decryptedFlag || 'Protected')}</strong> (Leave blank to keep existing, or enter new flag to update)`;
+    }
+    if (el.chEditDesc) el.chEditDesc.value = c.description || '';
+    if (el.chEditHints) el.chEditHints.value = (c.hints || []).join('\n');
+    if (el.chEditAttachments) {
+      el.chEditAttachments.value = (c.attachments && c.attachments.length) ? JSON.stringify(c.attachments, null, 2) : '';
+    }
+    if (el.chEditLocked) el.chEditLocked.checked = Boolean(c.isLocked);
+
+    // Sandbox
+    if (el.testSandboxCard) el.testSandboxCard.style.display = 'block';
+    if (el.testFlagInput) el.testFlagInput.value = '';
+    if (el.testFlagFeedback) el.testFlagFeedback.style.display = 'none';
+    if (el.editorFeedback) el.editorFeedback.style.display = 'none';
+
+    if (el.modalChallengeEditor) {
+      el.modalChallengeEditor.style.display = 'flex';
+    }
+  }
+
+  function closeChallengeModal() {
+    if (el.modalChallengeEditor) {
+      el.modalChallengeEditor.style.display = 'none';
+    }
+    state.editingChallengeId = null;
+  }
+
+  async function handleChallengeFormSubmit(e) {
+    e.preventDefault();
+
+    const isEdit = Boolean(state.editingChallengeId);
+    const id = isEdit ? state.editingChallengeId : el.chEditId.value.trim();
+    const title = el.chEditTitle.value.trim();
+    const category = el.chEditCategory.value;
+    const difficulty = el.chEditDifficulty.value;
+    const points = parseInt(el.chEditPoints.value, 10);
+    const description = el.chEditDesc.value.trim();
+    const flag = el.chEditFlag.value.trim();
+    const isLocked = el.chEditLocked.checked;
+
+    if (!id || !title || !category || isNaN(points) || !description) {
+      showEditorFeedback('Please fill out all required fields.', 'error');
+      return;
+    }
+
+    if (!isEdit && !flag) {
+      showEditorFeedback('A secret flag is required when creating a new challenge.', 'error');
+      return;
+    }
+
+    // Parse hints
+    const hints = el.chEditHints.value
+      .split('\n')
+      .map(h => h.trim())
+      .filter(h => h.length > 0);
+
+    // Parse attachments
+    let attachments = [];
+    const attRaw = el.chEditAttachments.value.trim();
+    if (attRaw) {
+      try {
+        attachments = JSON.parse(attRaw);
+        if (!Array.isArray(attachments)) {
+          throw new Error('Attachments must be a JSON array of objects');
+        }
+      } catch (err) {
+        showEditorFeedback('Invalid JSON in Attachments: ' + err.message, 'error');
+        return;
+      }
+    }
+
+    const payload = {
+      id,
+      title,
+      category,
+      difficulty,
+      points,
+      description,
+      hints,
+      attachments,
+      isLocked
+    };
+
+    if (flag) {
+      payload.flag = flag;
+    }
+
+    if (el.editorModalSave) el.editorModalSave.disabled = true;
+
+    try {
+      let resData;
+      if (isEdit) {
+        resData = await adminFetch(`/api/admin/challenges/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: payload
+        });
+      } else {
+        resData = await adminFetch('/api/admin/challenges', {
+          method: 'POST',
+          body: payload
+        });
+      }
+
+      showToast(resData.message || 'Challenge saved successfully!', 'success');
+      closeChallengeModal();
+      await fetchAdminData();
+    } catch (err) {
+      showEditorFeedback(err.message, 'error');
+    } finally {
+      if (el.editorModalSave) el.editorModalSave.disabled = false;
+    }
+  }
+
+  async function handleDeleteChallenge(challengeId, challengeTitle) {
+    if (!confirm(`Are you sure you want to permanently delete challenge "${challengeTitle}" (${challengeId}) from the database?`)) {
       return;
     }
 
     try {
-      const data = await adminFetch('/api/admin/challenge-lock-all', {
-        method: 'POST',
-        body: { isLocked }
+      const res = await adminFetch(`/api/admin/challenges/${encodeURIComponent(challengeId)}`, {
+        method: 'DELETE'
       });
-
-      state.challenges.forEach(c => {
-        c.isLocked = isLocked;
-      });
-
-      showToast(data.message, 'success');
-      renderChallengesTable();
-      updateMetricRatio();
+      showToast(res.message || `Challenge ${challengeId} deleted`, 'success');
+      await fetchAdminData();
     } catch (err) {
       showToast(err.message, 'error');
     }
+  }
+
+  async function handleTestFlagAction() {
+    if (!state.editingChallengeId) return;
+    const testAttempt = el.testFlagInput ? el.testFlagInput.value.trim() : '';
+
+    if (!testAttempt) {
+      if (el.testFlagFeedback) {
+        el.testFlagFeedback.className = 'feedback-msg error';
+        el.testFlagFeedback.textContent = 'Please enter a test flag attempt.';
+        el.testFlagFeedback.style.display = 'block';
+      }
+      return;
+    }
+
+    if (el.btnTestFlagAction) el.btnTestFlagAction.disabled = true;
+
+    try {
+      const res = await adminFetch('/api/admin/test-flag', {
+        method: 'POST',
+        body: { challengeId: state.editingChallengeId, flag: testAttempt }
+      });
+
+      if (el.testFlagFeedback) {
+        if (res.isCorrect) {
+          el.testFlagFeedback.className = 'feedback-msg success';
+          el.testFlagFeedback.innerHTML = `✓ <strong>VALID!</strong> Candidate flag matches database salted HMAC: <span class="mono">${escapeHtml(res.normalizedAttempt)}</span>`;
+        } else {
+          el.testFlagFeedback.className = 'feedback-msg error';
+          el.testFlagFeedback.innerHTML = `✗ <strong>INVALID:</strong> Flag attempt did not match database hash. Normalized: <span class="mono">${escapeHtml(res.normalizedAttempt)}</span>`;
+        }
+        el.testFlagFeedback.style.display = 'block';
+      }
+    } catch (err) {
+      if (el.testFlagFeedback) {
+        el.testFlagFeedback.className = 'feedback-msg error';
+        el.testFlagFeedback.textContent = 'Error testing flag: ' + err.message;
+        el.testFlagFeedback.style.display = 'block';
+      }
+    } finally {
+      if (el.btnTestFlagAction) el.btnTestFlagAction.disabled = false;
+    }
+  }
+
+  function showEditorFeedback(msg, type) {
+    if (!el.editorFeedback) return;
+    el.editorFeedback.className = `feedback-msg ${type}`;
+    el.editorFeedback.textContent = msg;
+    el.editorFeedback.style.display = 'block';
   }
 
   function updateMetricRatio() {

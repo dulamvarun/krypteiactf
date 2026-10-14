@@ -1,7 +1,9 @@
-// Server-side private challenge definitions
-// NOTE: Expected flags are NEVER returned to the client or public API responses!
+// Server-side seed challenge definitions
+// NOTE: Upon first launch, these challenges are automatically seeded into SQLite
+// with cryptographic HMAC-SHA256 salted hashes + AES-256-GCM envelope encryption.
+// Live validations and challenge state are handled dynamically by database.js.
 
-const CHALLENGES = [
+const INITIAL_CHALLENGES = [
   {
     id: 'gen-01',
     title: 'Terminal Sanity Check',
@@ -19,7 +21,6 @@ Decode the hexadecimal byte stream to reveal the introductory flag.`,
       'Each pair of hexadecimal digits (e.g., 4b, 52...) corresponds to one ASCII character in byte notation.',
       'You can use bash \`xxd -r -p\`, Python \`bytes.fromhex(...)\`, or an online tool like CyberChef.'
     ],
-    flag: 'KRYPTEIA{w3lc0m3_t0_krypt31a_2026}',
     attachments: []
   },
   {
@@ -40,7 +41,6 @@ The transmission logs indicate an encryption key shift of **+3**. Reverse the sh
       'Numbers, braces, and underscores remain untouched.',
       'The flag format is KRYPTEIA{...} without spaces (both KRYPTEIA and KRYPT EIA are accepted).'
     ],
-    flag: 'KRYPTEIA{c43s4r_sh1ft_c1ph3r_unl0ck3d}',
     attachments: []
   },
   {
@@ -62,7 +62,6 @@ Use your browser DevTools Console, curl, or fetch to query this endpoint with th
       'Open your browser Console (F12) and run:\nfetch("/api/diagnostics/vault-status", { headers: { "X-Krypteia-Role": "SecurityAdmin" } }).then(r => r.json()).then(console.log)',
       'Alternatively, visit \`/api/diagnostics/vault-status?debug=admin_override\` directly in your browser.'
     ],
-    flag: 'KRYPTEIA{h34d3r_sp00f1ng_m4st3r_99}',
     attachments: []
   },
   {
@@ -78,7 +77,6 @@ Our digital forensics analysts believe that sensitive intelligence was hidden in
       'Check the PNG textual metadata chunks using ExifTool, hex editor, or string inspection.',
       'On terminal: run \`strings stego_specimen.png | grep KRYPTEIA\` or inspect in CyberChef.'
     ],
-    flag: 'KRYPTEIA{m3t4d4t4_n3v3r_l13s_7812}',
     attachments: [
       {
         name: 'stego_specimen.png',
@@ -101,7 +99,6 @@ Download the packet capture file **traffic_analysis.pcap**, analyze the intercep
       'Open traffic_analysis.pcap in Wireshark or CyberChef.',
       'Right-click any TCP packet and choose "Follow > TCP Stream" to inspect the plaintext HTTP payload.'
     ],
-    flag: 'KRYPTEIA{p4ck3t_sn1ff3r_pr0t0c0l_337}',
     attachments: [
       {
         name: 'traffic_analysis.pcap',
@@ -133,7 +130,6 @@ Combine them in the exact format specified above.`,
       "St. Peter's Engineering College is situated at Maisammaguda, Medchal-Malkajgiri District, Hyderabad. The postal PIN code is 500100.",
       'Check official college publications or AICTE registration records for the establishment year (2007).'
     ],
-    flag: 'KRYPTEIA{SPEC_HYD_500100_2007}',
     attachments: []
   },
   {
@@ -157,7 +153,6 @@ Decrypt the ciphertext byte stream using the repeating key \`KRYPT\` to obtain t
       'In CyberChef: add "From Hex" operation, then add "XOR" operation with Key set to UTF-8 string "KRYPT".',
       'Or in Python: \nkey = b"KRYPT"\nct = bytes.fromhex("0000...")\nflag = bytes([b ^ key[i % len(key)] for i, b in enumerate(ct)])\nprint(flag.decode())'
     ],
-    flag: 'KRYPTEIA{x0r_c1ph3r_str34m_d3c0d3d_941}',
     attachments: [
       {
         name: 'xor_stream.hex',
@@ -185,7 +180,6 @@ Use browser document.cookie manipulation or curl to present the required cookie.
       "Set the cookie in DevTools > Storage/Application > Cookies, or in console: document.cookie = 'krypteia_role=cyber_commander; path=/';",
       'Then visit /api/diagnostics/cookie-vault in your browser or run fetch("/api/diagnostics/cookie-vault").then(r => r.json()).then(console.log)'
     ],
-    flag: 'KRYPTEIA{c00k13_m4n1pul4t10n_succ3ss}',
     attachments: []
   },
   {
@@ -215,7 +209,6 @@ Determine the correct order of the fragments and submit the complete flag.`,
       'In digital forensics, the visible image is only one part of the evidence. Inspect what the file contains beyond its appearance.',
       'Concatenate the two fragments in order: the metadata comment first, then the embedded artifact.'
     ],
-    flag: 'KRYPTEIA{m3t4d4t4_d03sn7_l13}',
     attachments: [
       {
         name: 'evidence_image.png',
@@ -227,32 +220,9 @@ Determine the correct order of the fragments and submit the complete flag.`,
   }
 ];
 
-// Map for fast O(1) lookup
+// Map for fast initial seed lookup
 const CHALLENGE_MAP = new Map();
-CHALLENGES.forEach(c => CHALLENGE_MAP.set(c.id, c));
-
-/**
- * Returns public challenge data stripped of all private flags.
- * Also attaches whether the user solved it and if it is locked.
- */
-function getPublicChallenges(userSolves = new Set(), solveCounts = {}, challengeLocks = {}) {
-  return CHALLENGES.map(c => {
-    const isLocked = Boolean(challengeLocks[c.id]);
-    return {
-      id: c.id,
-      title: c.title,
-      category: c.category,
-      difficulty: c.difficulty,
-      points: c.points,
-      description: isLocked ? '' : c.description,
-      hints: isLocked ? [] : c.hints,
-      attachments: isLocked ? [] : c.attachments,
-      solveCount: solveCounts[c.id] || 0,
-      isSolved: userSolves.has(c.id),
-      isLocked
-    };
-  });
-}
+INITIAL_CHALLENGES.forEach(c => CHALLENGE_MAP.set(c.id, c));
 
 /**
  * Normalizes submitted flags to handle common formatting quirks:
@@ -263,74 +233,40 @@ function getPublicChallenges(userSolves = new Set(), solveCounts = {}, challenge
 function normalizeFlag(flag) {
   if (!flag || typeof flag !== 'string') return '';
   let str = flag.trim();
-  // Fix accidental split between KRYPT and EIA
   str = str.replace(/^KRYPT[\s_]+EIA/i, 'KRYPTEIA');
-  // Fix spaces before opening brace
   str = str.replace(/^([A-Za-z0-9_-]+)\s*\{/, '$1{');
-  // Trim spaces immediately inside braces
   str = str.replace(/^([A-Za-z0-9_-]+\{)\s*(.*?)\s*(\})$/, '$1$2$3');
+  const braceIdx = str.indexOf('{');
+  if (braceIdx > 0 && str.endsWith('}')) {
+    const prefix = str.substring(0, braceIdx).toUpperCase();
+    const inner = str.substring(braceIdx + 1, str.length - 1);
+    str = `${prefix}{${inner}}`;
+  }
   return str;
 }
 
 /**
- * Validates a submitted flag against the private server-side answer.
- * Tolerates minor whitespace errors (e.g. "KRYPT EIA{...}").
+ * Returns public challenge data stripped of all private flags.
+ * Queries dynamic database store.
+ */
+function getPublicChallenges(userSolves = new Set(), solveCounts = {}, challengeLocks = {}) {
+  const db = require('./database');
+  return db.getAllPublicChallenges(userSolves, solveCounts, challengeLocks);
+}
+
+/**
+ * Validates a submitted flag against the cryptographic salted HMAC in the database.
  */
 function validateFlag(challengeId, submittedFlag) {
-  const challenge = CHALLENGE_MAP.get(challengeId);
-  if (!challenge) return { found: false };
-
-  const rawSubmitted = (submittedFlag || '').trim();
-  const rawExpected = challenge.flag.trim();
-
-  // 1. Direct exact match
-  if (rawSubmitted === rawExpected) {
-    return {
-      found: true,
-      isCorrect: true,
-      points: challenge.points,
-      title: challenge.title
-    };
-  }
-
-  // 2. Normalized match (handles "KRYPT EIA{...}", extra spaces, etc.)
-  const normSubmitted = normalizeFlag(rawSubmitted);
-  const normExpected = normalizeFlag(rawExpected);
-
-  if (normSubmitted === normExpected) {
-    return {
-      found: true,
-      isCorrect: true,
-      points: challenge.points,
-      title: challenge.title
-    };
-  }
-
-  // 3. Case-insensitive prefix match with exact inner payload
-  const matchSub = normSubmitted.match(/^([A-Za-z0-9_-]+)\{(.*)\}$/);
-  const matchExp = normExpected.match(/^([A-Za-z0-9_-]+)\{(.*)\}$/);
-  if (matchSub && matchExp) {
-    if (matchSub[1].toUpperCase() === matchExp[1].toUpperCase() && matchSub[2] === matchExp[2]) {
-      return {
-        found: true,
-        isCorrect: true,
-        points: challenge.points,
-        title: challenge.title
-      };
-    }
-  }
-
-  return {
-    found: true,
-    isCorrect: false,
-    points: challenge.points,
-    title: challenge.title
-  };
+  const db = require('./database');
+  return db.verifyFlag(challengeId, submittedFlag);
 }
 
 module.exports = {
-  CHALLENGES,
+  INITIAL_CHALLENGES,
+  CHALLENGES: INITIAL_CHALLENGES,
   CHALLENGE_MAP,
   getPublicChallenges,
-  validateFlag
+  validateFlag,
+  normalizeFlag
 };

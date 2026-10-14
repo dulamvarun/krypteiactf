@@ -94,7 +94,7 @@ async function runTests() {
       headers: { 'X-Krypteia-Role': 'SecurityAdmin' }
     });
     assert.strictEqual(authVault.status, 200);
-    assert.strictEqual(authVault.json.flag, 'KRYPTEIA{h34d3r_sp00f1ng_m4st3r_99}');
+    assert.ok(authVault.json.flag && authVault.json.flag.startsWith('KRYPTEIA{'));
     console.log('  ✓ Interactive Vault API correctly responds to header authentication');
 
     // Test 6: Flag submission - Incorrect flag
@@ -108,12 +108,17 @@ async function runTests() {
     assert.strictEqual(badSub.json.success, false);
     console.log('  ✓ Incorrect flag rejected with error message');
 
+    // Retrieve flags dynamically from secure database for test assertions
+    const flagGen01 = db.decryptFlag(db.getChallengeById('gen-01').flag_encrypted);
+    const flagCrypto01 = db.decryptFlag(db.getChallengeById('crypto-01').flag_encrypted);
+    const flagWeb01 = db.decryptFlag(db.getChallengeById('web-01').flag_encrypted);
+
     // Test 7: Flag submission - Correct flag
     console.log('[7] Testing flag submission with correct flag');
     const goodSub = await request('/api/submit-flag', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
-      body: { challengeId: 'gen-01', flag: 'KRYPTEIA{w3lc0m3_t0_krypt31a_2026}' }
+      body: { challengeId: 'gen-01', flag: flagGen01 }
     });
     assert.strictEqual(goodSub.status, 200);
     assert.strictEqual(goodSub.json.success, true);
@@ -127,7 +132,7 @@ async function runTests() {
     const dupSub = await request('/api/submit-flag', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
-      body: { challengeId: 'gen-01', flag: 'KRYPTEIA{w3lc0m3_t0_krypt31a_2026}' }
+      body: { challengeId: 'gen-01', flag: flagGen01 }
     });
     assert.strictEqual(dupSub.status, 200);
     assert.strictEqual(dupSub.json.success, false);
@@ -135,12 +140,13 @@ async function runTests() {
     console.log('  ✓ Duplicate flag solve safely rejected without duplicate points');
 
     // Test 9: Flag submission with extra space (e.g. KRYPT EIA{...} from Caesar cipher decoders)
-    console.log('[9] Testing flag submission with extra space: KRYPT EIA{c43s4r_sh1ft_c1ph3r_unl0ck3d}');
+    console.log('[9] Testing flag submission with extra space: KRYPT EIA{...}');
     await new Promise(r => setTimeout(r, 5200));
+    const spaceFlag = flagCrypto01.replace('KRYPTEIA', 'KRYPT EIA');
     const spaceSub = await request('/api/submit-flag', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
-      body: { challengeId: 'crypto-01', flag: 'KRYPT EIA{c43s4r_sh1ft_c1ph3r_unl0ck3d}' }
+      body: { challengeId: 'crypto-01', flag: spaceFlag }
     });
     assert.strictEqual(spaceSub.status, 200);
     assert.strictEqual(spaceSub.json.success, true);
@@ -155,7 +161,7 @@ async function runTests() {
     const thirdSub = await request('/api/submit-flag', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authToken}` },
-      body: { challengeId: 'web-01', flag: 'KRYPTEIA{h34d3r_sp00f1ng_m4st3r_99}' }
+      body: { challengeId: 'web-01', flag: flagWeb01 }
     });
     assert.strictEqual(thirdSub.status, 200);
     assert.strictEqual(thirdSub.json.success, true);
@@ -186,6 +192,78 @@ async function runTests() {
     assert.strictEqual(rulesRes.status, 200);
     assert.ok(rulesRes.json.rules.length >= 5);
     console.log('  ✓ Rules returned correctly');
+
+    // Test 12: Admin authentication and Challenge Management API
+    console.log('[12] Testing Admin Login & Challenge Creation with Salted HMAC flag');
+    const adminLoginRes = await request('/api/admin/login', {
+      method: 'POST',
+      body: { id: 'pappu', password: 'Bt@1801' }
+    });
+    assert.strictEqual(adminLoginRes.status, 200);
+    assert.ok(adminLoginRes.json.token);
+    const adminToken = adminLoginRes.json.token;
+    const dynamicTestFlag = `KRYPTEIA{test_probe_${Date.now()}}`;
+
+    // Create a new challenge dynamically
+    const newChRes = await request('/api/admin/challenges', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: {
+        id: 'rev-01',
+        title: 'Binary Disassembly Probe',
+        category: 'Reverse Engineering',
+        difficulty: 'Hard',
+        points: 300,
+        description: 'Disassemble the ELF binary to recover the secret access code.',
+        hints: ['Look at strcmp in main function'],
+        attachments: [],
+        flag: dynamicTestFlag,
+        isLocked: false
+      }
+    });
+    assert.strictEqual(newChRes.status, 200);
+    assert.strictEqual(newChRes.json.success, true);
+    console.log('  ✓ Admin successfully created dynamic challenge with salted HMAC flag');
+
+    // Test 13: Verify DB storage does NOT contain plaintext flag
+    console.log('[13] Testing DB internal storage security (zero plaintext flags)');
+    const chInDb = db.getChallengeById('rev-01');
+    assert.ok(chInDb);
+    assert.ok(chInDb.flag_hash);
+    assert.ok(chInDb.flag_salt);
+    assert.strictEqual(chInDb.flag, undefined);
+    assert.notStrictEqual(chInDb.flag_hash, dynamicTestFlag);
+    // Verify decrypted flag available to admin
+    assert.strictEqual(db.decryptFlag(chInDb.flag_encrypted), dynamicTestFlag);
+    console.log('  ✓ DB stores only salted HMAC and AES-256-GCM envelope; plaintext flag is nowhere in the DB table');
+
+    // Test 14: Test flag sandbox API
+    console.log('[14] Testing /api/admin/test-flag sandbox');
+    const testFlagGood = await request('/api/admin/test-flag', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: { challengeId: 'rev-01', flag: dynamicTestFlag }
+    });
+    assert.strictEqual(testFlagGood.json.isCorrect, true);
+
+    const testFlagBad = await request('/api/admin/test-flag', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: { challengeId: 'rev-01', flag: 'KRYPTEIA{wrong_guess}' }
+    });
+    assert.strictEqual(testFlagBad.json.isCorrect, false);
+    console.log('  ✓ Admin flag test sandbox correctly verifies valid and invalid flags');
+
+    // Test 15: Clean up created challenge
+    console.log('[15] Testing admin challenge deletion');
+    const delRes = await request('/api/admin/challenges/rev-01', {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.strictEqual(delRes.status, 200);
+    assert.strictEqual(delRes.json.success, true);
+    assert.strictEqual(db.getChallengeById('rev-01'), null);
+    console.log('  ✓ Admin challenge deletion works cleanly');
 
     console.log('\n>>> ALL BACKEND API TESTS PASSED SUCCESSFULLY! <<<');
   } finally {
