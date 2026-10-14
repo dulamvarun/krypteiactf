@@ -32,6 +32,7 @@
       await Promise.all([loadConfig(), loadUserSession()]);
       await loadChallenges();
       startCountdownTimer();
+      startLivePolling();
     } catch (err) {
       console.error('Initialization error:', err);
       showToast('Error loading competition data', 'error');
@@ -74,6 +75,7 @@
     elements.modalCategory = document.getElementById('modal-category');
     elements.modalDifficulty = document.getElementById('modal-difficulty');
     elements.modalPoints = document.getElementById('modal-points');
+    elements.modalSolvesCount = document.getElementById('modal-solves-count');
     elements.modalSolvedStatus = document.getElementById('modal-solved-status');
     elements.modalTitle = document.getElementById('modal-title');
     elements.modalDescription = document.getElementById('modal-description');
@@ -350,6 +352,60 @@
     state.timerInterval = setInterval(update, 1000);
   }
 
+  // Live dynamic polling to keep standings, solve counts, and ranks updated
+  let livePollingInterval = null;
+  function startLivePolling() {
+    if (livePollingInterval) clearInterval(livePollingInterval);
+
+    livePollingInterval = setInterval(async () => {
+      if (document.hidden) return;
+
+      try {
+        if (state.activeTab === 'leaderboard') {
+          await loadLeaderboard();
+        } else if (state.activeTab === 'challenges') {
+          const res = await API.getChallenges();
+          if (res && res.challenges) {
+            let hasChanges = false;
+            res.challenges.forEach(freshCh => {
+              const current = state.challenges.find(c => c.id === freshCh.id);
+              if (current) {
+                if (current.solveCount !== freshCh.solveCount || current.isSolved !== freshCh.isSolved) {
+                  current.solveCount = freshCh.solveCount;
+                  current.isSolved = freshCh.isSolved;
+                  hasChanges = true;
+                }
+              }
+            });
+
+            if (hasChanges) {
+              renderChallenges();
+              if (state.currentModalChallengeId && elements.modalSolvesCount) {
+                const modalCh = state.challenges.find(c => c.id === state.currentModalChallengeId);
+                if (modalCh) {
+                  elements.modalSolvesCount.textContent = `${modalCh.solveCount || 0} solves`;
+                }
+              }
+            }
+          }
+        }
+
+        // Keep current participant stats & rank in sync
+        if (state.currentUser) {
+          const me = await API.getMe();
+          if (me && me.user) {
+            state.currentUser.totalPoints = me.user.totalPoints;
+            state.currentUser.solvedCount = me.user.solvedCount;
+            state.currentUser.rank = me.user.rank;
+            updateUserUI();
+          }
+        }
+      } catch (err) {
+        // Background polling errors silent
+      }
+    }, 4000);
+  }
+
   // Load Challenges
   async function loadChallenges() {
     try {
@@ -483,7 +539,7 @@
         <div class="card-bottom-row">
           <span class="difficulty-pill ${diffClass}">${escapeHtml(c.difficulty)}</span>
           <div class="card-status-indicator ${c.isSolved ? 'solved-text' : 'unsolved-text'}">
-            ${c.isSolved ? '✓ COMPLETED' : `○ ${c.solveCount || 0} solves`}
+            ${c.isSolved ? `✓ SOLVED (${c.solveCount || 0} solves)` : `○ ${c.solveCount || 0} solves`}
           </div>
         </div>
       `;
@@ -507,6 +563,11 @@
     // Difficulty pill
     elements.modalDifficulty.textContent = c.difficulty;
     elements.modalDifficulty.className = `difficulty-pill diff-${c.difficulty.toLowerCase()}`;
+
+    // Dynamic solve count badge
+    if (elements.modalSolvesCount) {
+      elements.modalSolvesCount.textContent = `${c.solveCount || 0} solves`;
+    }
 
     // Solved status pill in header
     if (c.isSolved) {
@@ -666,6 +727,9 @@
         }
 
         renderChallenges();
+        if (elements.modalSolvesCount && target) {
+          elements.modalSolvesCount.textContent = `${target.solveCount} solves`;
+        }
 
         // Lock form on solve
         elements.flagInput.disabled = true;
@@ -673,6 +737,10 @@
         elements.modalSolvedStatus.style.display = 'inline-flex';
         elements.modalSolvedStatus.className = 'comp-badge live';
         elements.modalSolvedStatus.innerHTML = '✓ SOLVED';
+
+        // Refresh authoritative leaderboard and challenge list dynamically
+        loadLeaderboard();
+        loadChallenges();
       } else if (res.alreadySolved) {
         showFeedback(res.message, 'info');
       }
@@ -722,21 +790,25 @@
       const top3 = state.leaderboardData.slice(0, 3);
       elements.podiumContainer.innerHTML = '';
 
-      const podiumTiers = ['gold', 'silver', 'bronze'];
-      const rankTitles = ['1st Place', '2nd Place', '3rd Place'];
+      if (top3.length === 0) {
+        elements.podiumContainer.style.display = 'none';
+      } else {
+        elements.podiumContainer.style.display = 'grid';
+        const podiumTiers = ['gold', 'silver', 'bronze'];
 
-      top3.forEach((item, idx) => {
-        const tier = podiumTiers[idx] || 'bronze';
-        const card = document.createElement('div');
-        card.className = `podium-card ${tier}`;
-        card.innerHTML = `
-          <div class="podium-rank-badge">#${item.rank}</div>
-          <div class="podium-username">${escapeHtml(item.username)} ${item.isCurrentParticipant ? '<span class="you-tag">YOU</span>' : ''}</div>
-          <div class="podium-score">${item.totalPoints} PTS</div>
-          <div class="podium-meta">${item.solvedCount} solves · ${formatTimestamp(item.lastSolveTime)}</div>
-        `;
-        elements.podiumContainer.appendChild(card);
-      });
+        top3.forEach((item, idx) => {
+          const tier = podiumTiers[idx] || 'bronze';
+          const card = document.createElement('div');
+          card.className = `podium-card ${tier}`;
+          card.innerHTML = `
+            <div class="podium-rank-badge">#${item.rank}</div>
+            <div class="podium-username">${escapeHtml(item.username)} ${item.isCurrentParticipant ? '<span class="you-tag">YOU</span>' : ''}</div>
+            <div class="podium-score">${item.totalPoints} PTS</div>
+            <div class="podium-meta">${item.solvedCount} solves · ${formatTimestamp(item.lastSolveTime)}</div>
+          `;
+          elements.podiumContainer.appendChild(card);
+        });
+      }
     }
 
     // Leaderboard Table
@@ -745,7 +817,10 @@
         <tr>
           <td colspan="5" class="empty-state">
             <div class="empty-state-icon">🏆</div>
-            <div>No leaderboard records found</div>
+            <div style="font-size: 1.1rem; font-weight: 600;">Leaderboard is clear</div>
+            <div style="margin-top: 0.35rem; color: var(--text-muted); font-size: 0.9rem;">
+              Rankings update dynamically in real time as participants register and solve challenges.
+            </div>
           </td>
         </tr>
       `;
@@ -964,11 +1039,12 @@
     if (!isoStr) return 'No solves yet';
     try {
       const date = new Date(isoStr);
-      const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
-      if (diffSec < 60) return `${diffSec}s ago`;
-      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const diffSec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+      const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      if (diffSec < 60) return `${timeStr} (${diffSec}s ago)`;
+      if (diffSec < 3600) return `${timeStr} (${Math.floor(diffSec / 60)}m ago)`;
+      if (diffSec < 86400) return `${timeStr} (${Math.floor(diffSec / 3600)}h ago)`;
+      return date.toLocaleDateString() + ' ' + timeStr;
     } catch (e) {
       return isoStr;
     }

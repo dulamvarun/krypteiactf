@@ -200,7 +200,91 @@ function generateXorStream() {
   console.log('Created xor_stream.hex:', hexString);
 }
 
+// 4. Generate evidence_image.png for forensics-02 challenge
+// Flag fragment 1 in tEXt metadata, fragment 2 appended after IEND
+function generateEvidenceImage() {
+  const pngPath = path.join(attachmentsDir, 'evidence_image.png');
+  const zlib = require('zlib');
+
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  function crc32(buf) {
+    let table = [];
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      table[i] = c;
+    }
+    let crc = 0 ^ (-1);
+    for (let i = 0; i < buf.length; i++) {
+      crc = (crc >>> 8) ^ table[(crc ^ buf[i]) & 0xff];
+    }
+    return (crc ^ (-1)) >>> 0;
+  }
+
+  function makeChunk(type, data) {
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32BE(data.length, 0);
+    const typeBuf = Buffer.from(type, 'ascii');
+    const typeAndData = Buffer.concat([typeBuf, data]);
+    const crcBuf = Buffer.alloc(4);
+    crcBuf.writeUInt32BE(crc32(typeAndData), 0);
+    return Buffer.concat([lenBuf, typeAndData, crcBuf]);
+  }
+
+  // IHDR: 100x100 8-bit RGB
+  const width = 100;
+  const height = 100;
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(width, 0);
+  ihdrData.writeUInt32BE(height, 4);
+  ihdrData.writeUInt8(8, 8);
+  ihdrData.writeUInt8(2, 9);
+  ihdrData.writeUInt8(0, 10);
+  ihdrData.writeUInt8(0, 11);
+  ihdrData.writeUInt8(0, 12);
+  const ihdrChunk = makeChunk('IHDR', ihdrData);
+
+  // tEXt chunk: Flag fragment 1 hidden in Comment metadata
+  const metaData = Buffer.from('Comment\0KRYPTEIA{m3t4d4t4_', 'latin1');
+  const textChunk = makeChunk('tEXt', metaData);
+
+  // tEXt chunk: Innocent-looking author info
+  const authorData = Buffer.from('Author\0SPEC Incident Response Team', 'latin1');
+  const authorChunk = makeChunk('tEXt', authorData);
+
+  // Image data: Dark gradient pattern
+  const rawRows = [];
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3);
+    row[0] = 0;
+    for (let x = 0; x < width; x++) {
+      const idx = 1 + x * 3;
+      row[idx] = Math.min(255, Math.floor(30 + (x / width) * 60));
+      row[idx + 1] = Math.min(255, Math.floor(30 + (y / height) * 80));
+      row[idx + 2] = Math.min(255, Math.floor(60 + Math.sin((x + y) / 15) * 40));
+    }
+    rawRows.push(row);
+  }
+  const rawImage = Buffer.concat(rawRows);
+  const compressedImage = zlib.deflateSync(rawImage);
+  const idatChunk = makeChunk('IDAT', compressedImage);
+
+  // IEND chunk
+  const iendChunk = makeChunk('IEND', Buffer.alloc(0));
+
+  // Append fragment 2 AFTER IEND as hidden embedded artifact
+  const hiddenArtifact = Buffer.from('\n--- EMBEDDED ARTIFACT ---\nRecovered from disk sector 0x4F:\nd03sn7_l13}\n--- END ARTIFACT ---\n');
+
+  const fullPng = Buffer.concat([signature, ihdrChunk, authorChunk, textChunk, idatChunk, iendChunk, hiddenArtifact]);
+  fs.writeFileSync(pngPath, fullPng);
+  console.log('Created evidence_image.png, bytes:', fullPng.length);
+}
+
 generatePcap();
 generateStegoPng();
 generateXorStream();
+generateEvidenceImage();
 console.log('All challenge assets generated successfully!');

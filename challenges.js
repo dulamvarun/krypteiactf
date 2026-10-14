@@ -187,6 +187,43 @@ Use browser document.cookie manipulation or curl to present the required cookie.
     ],
     flag: 'KRYPTEIA{c00k13_m4n1pul4t10n_succ3ss}',
     attachments: []
+  },
+  {
+    id: 'forensics-02',
+    title: 'Evidence in Pieces',
+    category: 'Digital Forensics',
+    difficulty: 'Easy',
+    points: 150,
+    description: `Our incident response team recovered an image from a compromised workstation. The file appears ordinary, but the analyst suspects that evidence has been left behind.
+
+Your task is to inspect the provided evidence and recover the complete flag.
+
+**Evidence 1 — Image Metadata**
+
+The extracted metadata contains a suspicious comment:
+
+\`KRYPTEIA{m3t4d4t4_\`
+
+**Evidence 2 — Embedded Artifact**
+
+A separate artifact extracted from the same image contains:
+
+\`d03sn7_l13}\`
+
+Determine the correct order of the fragments and submit the complete flag.`,
+    hints: [
+      'In digital forensics, the visible image is only one part of the evidence. Inspect what the file contains beyond its appearance.',
+      'Concatenate the two fragments in order: the metadata comment first, then the embedded artifact.'
+    ],
+    flag: 'KRYPTEIA{m3t4d4t4_d03sn7_l13}',
+    attachments: [
+      {
+        name: 'evidence_image.png',
+        url: '/attachments/evidence_image.png',
+        size: '17 KB',
+        type: 'image/png'
+      }
+    ]
   }
 ];
 

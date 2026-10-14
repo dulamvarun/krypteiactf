@@ -423,15 +423,17 @@ function getLeaderboard(currentUserId = null) {
       SELECT 
         u.id as user_id,
         u.username,
+        u.created_at,
         COALESCE(SUM(s.points), 0) as total_points,
         COUNT(s.id) as solved_count,
         MAX(s.solved_at) as last_solve_time
       FROM users u
       LEFT JOIN solves s ON u.id = s.user_id
-      GROUP BY u.id, u.username
+      GROUP BY u.id, u.username, u.created_at
       ORDER BY total_points DESC,
                CASE WHEN last_solve_time IS NULL THEN 1 ELSE 0 END ASC,
                last_solve_time ASC,
+               u.created_at ASC,
                u.id ASC
     `).all();
 
@@ -456,6 +458,7 @@ function getLeaderboard(currentUserId = null) {
       return {
         user_id: u.id,
         username: u.username,
+        created_at: u.created_at,
         total_points: totalPoints,
         solved_count: userSolves.length,
         last_solve_time: lastSolveTime
@@ -463,15 +466,20 @@ function getLeaderboard(currentUserId = null) {
     });
 
     userScores.sort((a, b) => {
+      // 1. Points priority (higher points first)
       if (b.total_points !== a.total_points) {
         return b.total_points - a.total_points;
       }
-      // Tie breaking
+      // 2. Earliest last solve time has priority
       if (a.last_solve_time && !b.last_solve_time) return -1;
       if (!a.last_solve_time && b.last_solve_time) return 1;
       if (a.last_solve_time && b.last_solve_time) {
         if (a.last_solve_time < b.last_solve_time) return -1;
         if (a.last_solve_time > b.last_solve_time) return 1;
+      }
+      // 3. For 0-solve users: earlier registration wins
+      if (a.created_at && b.created_at && a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? -1 : 1;
       }
       return a.user_id - b.user_id;
     });
@@ -557,8 +565,69 @@ function checkRateLimit(userId) {
   return { limited: false };
 }
 
-// Seed initial competition demo participants
+// Initialize competition configuration
+function initCompetitionConfigIfNeeded() {
+  const startTime = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+  const endTime = new Date(Date.now() + 21 * 3600 * 1000).toISOString();
+
+  if (useSqlite) {
+    const configCount = sqliteDb.prepare('SELECT COUNT(*) as count FROM competition_config').get().count;
+    if (configCount === 0) {
+      const insertConfig = sqliteDb.prepare('INSERT OR REPLACE INTO competition_config (key, value) VALUES (?, ?)');
+      insertConfig.run('competition_name', 'KRYPTEIA CTF 2026');
+      insertConfig.run('institution', "St. Peter's Engineering College");
+      insertConfig.run('club', 'Krypteia — The Cyber Security Technical Club');
+      insertConfig.run('status', 'Live');
+      insertConfig.run('start_time', startTime);
+      insertConfig.run('end_time', endTime);
+    }
+  } else {
+    if (!memoryStore.config) {
+      memoryStore.config = {
+        competition_name: 'KRYPTEIA CTF 2026',
+        club: 'Krypteia — The Cyber Security Technical Club',
+        institution: "St. Peter's Engineering College",
+        status: 'Live',
+        start_time: startTime,
+        end_time: endTime
+      };
+    }
+  }
+}
+
+// Clear all participants, solves, sessions, and submissions to start fresh
+function clearAllParticipants() {
+  if (useSqlite) {
+    sqliteDb.transaction(() => {
+      sqliteDb.exec(`
+        DELETE FROM sessions;
+        DELETE FROM solves;
+        DELETE FROM submissions;
+        DELETE FROM users;
+      `);
+      try {
+        sqliteDb.exec(`DELETE FROM sqlite_sequence WHERE name IN ('users', 'solves', 'submissions');`);
+      } catch (_) {}
+    })();
+    return { success: true, message: 'All participants, solves, sessions, and submissions cleared.' };
+  } else {
+    memoryStore.users = [];
+    memoryStore.sessions = [];
+    memoryStore.solves = [];
+    memoryStore.submissions = [];
+    memoryStore.nextUserId = 1;
+    memoryStore.nextSolveId = 1;
+    memoryStore.nextSubId = 1;
+    return { success: true, message: 'All participants, solves, sessions, and submissions cleared from memory.' };
+  }
+}
+
+// Seed initial competition demo participants only if SEED_DEMO_DATA is explicitly true
 function seedDemoDataIfNeeded() {
+  if (process.env.SEED_DEMO_DATA !== 'true') {
+    return;
+  }
+
   const pointsMap = {
     'gen-01': 50,
     'crypto-01': 100,
@@ -582,16 +651,6 @@ function seedDemoDataIfNeeded() {
   if (useSqlite) {
     const userCount = sqliteDb.prepare('SELECT COUNT(*) as count FROM users').get().count;
     if (userCount > 0) return;
-
-    const startTime = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-    const endTime = new Date(Date.now() + 21 * 3600 * 1000).toISOString();
-    const insertConfig = sqliteDb.prepare('INSERT OR REPLACE INTO competition_config (key, value) VALUES (?, ?)');
-    insertConfig.run('competition_name', 'KRYPTEIA CTF 2026');
-    insertConfig.run('institution', "St. Peter's Engineering College");
-    insertConfig.run('club', 'Krypteia — The Cyber Security Technical Club');
-    insertConfig.run('status', 'Live');
-    insertConfig.run('start_time', startTime);
-    insertConfig.run('end_time', endTime);
 
     for (const d of demoUsers) {
       const user = createUser(d.username, d.email, 'Krypteia#2026', 1);
@@ -630,6 +689,7 @@ function seedDemoDataIfNeeded() {
   }
 }
 
+initCompetitionConfigIfNeeded();
 seedDemoDataIfNeeded();
 
 function getCompetitionConfig() {
@@ -680,5 +740,7 @@ module.exports = {
   getLeaderboard,
   getUserStats,
   checkRateLimit,
-  getCompetitionConfig
+  getCompetitionConfig,
+  clearAllParticipants,
+  initCompetitionConfigIfNeeded
 };
