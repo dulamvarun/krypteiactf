@@ -18,8 +18,8 @@ const INITIAL_CHALLENGES = [
 
 Decode the hexadecimal byte stream to reveal the introductory flag.`,
     hints: [
-      'Each pair of hexadecimal digits (e.g., 4b, 52...) corresponds to one ASCII character in byte notation.',
-      'You can use bash \`xxd -r -p\`, Python \`bytes.fromhex(...)\`, or an online tool like CyberChef.'
+      'Raw machine telemetry is often transmitted as pairs of hexadecimal nibbles representing byte values.',
+      'Consider how hexadecimal notation maps to ASCII character tables in computing fundamentals.'
     ],
     attachments: []
   },
@@ -37,9 +37,8 @@ NUBSWHLD{f43v4u_vk1iw_f1sk3u_xqo0fn3g}
 
 The transmission logs indicate an encryption key shift of **+3**. Reverse the shift (-3) to recover the original flag.`,
     hints: [
-      'Shift each alphabet character backward by 3 positions (N -> K, U -> R...).',
-      'Numbers, braces, and underscores remain untouched.',
-      'The flag format is KRYPTEIA{...} without spaces (both KRYPTEIA and KRYPT EIA are accepted).'
+      'Classical substitution ciphers maintain predictable frequency and offset patterns across the 26-letter Latin alphabet.',
+      'Notice that non-alphabetical characters (like underscores, numbers, and braces) typically do not shift.'
     ],
     attachments: []
   },
@@ -59,8 +58,8 @@ or query parameter:
 
 Use your browser DevTools Console, curl, or fetch to query this endpoint with the correct authorization header or parameter to retrieve the secret flag.`,
     hints: [
-      'Open your browser Console (F12) and run:\nfetch("/api/diagnostics/vault-status", { headers: { "X-Krypteia-Role": "SecurityAdmin" } }).then(r => r.json()).then(console.log)',
-      'Alternatively, visit \`/api/diagnostics/vault-status?debug=admin_override\` directly in your browser.'
+      'Web services frequently evaluate authorization based on contextual metadata supplied in the HTTP request headers or query parameters.',
+      'Explore how your browser developer tools or HTTP clients allow crafting requests with custom client headers.'
     ],
     attachments: []
   },
@@ -74,8 +73,8 @@ Use your browser DevTools Console, curl, or fetch to query this endpoint with th
 
 Our digital forensics analysts believe that sensitive intelligence was hidden inside the file metadata or image structure. Download the attachment and extract the flag.`,
     hints: [
-      'Check the PNG textual metadata chunks using ExifTool, hex editor, or string inspection.',
-      'On terminal: run \`strings stego_specimen.png | grep KRYPTEIA\` or inspect in CyberChef.'
+      'Image file formats contain non-visual data segments—such as header chunks, metadata tags, and appended raw strings.',
+      'Examine the file structure for contiguous sequences of printable text that may be embedded within the binary stream.'
     ],
     attachments: [
       {
@@ -96,8 +95,8 @@ Our digital forensics analysts believe that sensitive intelligence was hidden in
 
 Download the packet capture file **traffic_analysis.pcap**, analyze the intercepted TCP/HTTP payload, and reconstruct the exfiltrated flag.`,
     hints: [
-      'Open traffic_analysis.pcap in Wireshark or CyberChef.',
-      'Right-click any TCP packet and choose "Follow > TCP Stream" to inspect the plaintext HTTP payload.'
+      'Network captures preserve packet headers and payloads across communication sessions.',
+      'Reconstructing the conversation stream between the source and destination IP addresses often reveals unencrypted protocol exchanges.'
     ],
     attachments: [
       {
@@ -127,8 +126,8 @@ Investigate public records for St. Peter's Engineering College to identify:
 
 Combine them in the exact format specified above.`,
     hints: [
-      "St. Peter's Engineering College is situated at Maisammaguda, Medchal-Malkajgiri District, Hyderabad. The postal PIN code is 500100.",
-      'Check official college publications or AICTE registration records for the establishment year (2007).'
+      'Postal Index Numbers (PIN codes) in the Maisammaguda / Medchal area can be verified through official postal directory lookups.',
+      'Educational regulatory portals and official college history pages list the approved establishment milestone for engineering colleges in Hyderabad.'
     ],
     attachments: []
   },
@@ -150,8 +149,8 @@ The raw hexadecimal representation of the intercepted payload is:
 
 Decrypt the ciphertext byte stream using the repeating key \`KRYPT\` to obtain the flag.`,
     hints: [
-      'In CyberChef: add "From Hex" operation, then add "XOR" operation with Key set to UTF-8 string "KRYPT".',
-      'Or in Python: \nkey = b"KRYPT"\nct = bytes.fromhex("0000...")\nflag = bytes([b ^ key[i % len(key)] for i, b in enumerate(ct)])\nprint(flag.decode())'
+      'XOR is a symmetric bitwise operation: applying the repeating key to the ciphertext reverses the transformation.',
+      'Ensure the key cycles periodically across every byte of the hex-decoded byte stream.'
     ],
     attachments: [
       {
@@ -177,8 +176,8 @@ the access barrier unlocks and outputs the flag.
 
 Use browser document.cookie manipulation or curl to present the required cookie.`,
     hints: [
-      "Set the cookie in DevTools > Storage/Application > Cookies, or in console: document.cookie = 'krypteia_role=cyber_commander; path=/';",
-      'Then visit /api/diagnostics/cookie-vault in your browser or run fetch("/api/diagnostics/cookie-vault").then(r => r.json()).then(console.log)'
+      'Stateful web authentication often checks client-managed storage tokens passed automatically in request headers.',
+      'Inspect how cookies can be viewed, created, or modified within browser storage or via client-side scripts.'
     ],
     attachments: []
   },
@@ -206,8 +205,8 @@ A separate artifact extracted from the same image contains:
 
 Determine the correct order of the fragments and submit the complete flag.`,
     hints: [
-      'In digital forensics, the visible image is only one part of the evidence. Inspect what the file contains beyond its appearance.',
-      'Concatenate the two fragments in order: the metadata comment first, then the embedded artifact.'
+      'Forensic investigations often require piecing together disjointed artifacts found in image metadata and file payloads.',
+      'Check the syntax of CTF flag conventions to reconstruct the fragments into a single coherent flag.'
     ],
     attachments: [
       {

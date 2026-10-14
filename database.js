@@ -1104,40 +1104,40 @@ function testFlagValidation(challengeId, candidateFlag) {
 }
 
 function seedChallengesIfNeeded() {
-  let count = 0;
-  if (useSqlite) {
-    try {
-      const row = sqliteDb.prepare('SELECT COUNT(*) as count FROM challenges').get();
-      count = row ? row.count : 0;
-    } catch (_) {
-      count = 0;
-    }
-  } else {
-    count = (memoryStore.challenges || []).length;
-  }
-
-  if (count > 0) return;
-
   try {
     const { INITIAL_CHALLENGES } = require('./challenges');
     if (Array.isArray(INITIAL_CHALLENGES)) {
       INITIAL_CHALLENGES.forEach(c => {
         try {
-          createChallenge({
-            id: c.id,
-            title: c.title,
-            category: c.category,
-            difficulty: c.difficulty,
-            points: c.points,
-            description: c.description,
-            hints: c.hints,
-            attachments: c.attachments,
-            flag: c.flag,
-            isLocked: false
-          });
+          const existing = getChallengeById(c.id);
+          if (existing) {
+            // Keep flags, points, locks, and solves intact, but sync refined non-obvious hints and description
+            const hintsJson = JSON.stringify(Array.isArray(c.hints) ? c.hints : []);
+            if (useSqlite) {
+              sqliteDb.prepare(`
+                UPDATE challenges SET hints_json = ?, description = ? WHERE id = ?
+              `).run(hintsJson, c.description, c.id);
+            } else {
+              existing.hints_json = hintsJson;
+              existing.description = c.description;
+            }
+          } else {
+            createChallenge({
+              id: c.id,
+              title: c.title,
+              category: c.category,
+              difficulty: c.difficulty,
+              points: c.points,
+              description: c.description,
+              hints: c.hints,
+              attachments: c.attachments,
+              flag: c.flag,
+              isLocked: false
+            });
+          }
         } catch (_) {}
       });
-      console.log(`[Database] Successfully seeded ${INITIAL_CHALLENGES.length} challenges with HMAC-SHA256 salted hashes and AES-256-GCM encryption.`);
+      console.log(`[Database] Synchronized canonical challenge definitions with refined non-obvious hints.`);
     }
   } catch (err) {
     console.warn('[Database] Challenge seeding notice:', err.message);
