@@ -99,7 +99,6 @@
     elements.flagInput = document.getElementById('flag-input');
     elements.flagSubmitBtn = document.getElementById('flag-submit-btn');
     elements.flagFeedback = document.getElementById('flag-feedback');
-    elements.modalSubmissionSection = document.getElementById('modal-submission-section');
     elements.btnPrevChallenge = document.getElementById('btn-prev-challenge');
     elements.btnNextChallenge = document.getElementById('btn-next-challenge');
 
@@ -650,7 +649,7 @@
           <h3 class="card-title ${c.isSolved ? 'title-solved' : ''}">
             ${c.isSolved ? '<span class="title-check">✓</span> ' : ''}${isLocked ? '<span style="color:#fc8181; margin-right:4px;">🔒</span>' : ''}${escapeHtml(c.title)}
           </h3>
-          <p class="card-preview-text">${isLocked ? '<em style="color:var(--text-muted);">This challenge is currently locked by the organizers.</em>' : escapeHtml(cleanDesc)}</p>
+          <p class="card-preview-text">${isLocked ? '<em style="color:var(--text-muted); font-size:0.83rem;">🔒 Question locked by administrators</em>' : escapeHtml(cleanDesc)}</p>
         </div>
         <div class="card-bottom-row">
           <span class="difficulty-pill ${diffClass}">${escapeHtml(c.difficulty)}</span>
@@ -660,7 +659,13 @@
         </div>
       `;
 
-      card.addEventListener('click', () => openChallengeModal(c.id));
+      card.addEventListener('click', () => {
+        if (isLocked) {
+          showToast(`🔒 "${c.title}" is locked by administrators. It will unlock when the competition organizers make it active.`, 'error');
+          return;
+        }
+        openChallengeModal(c.id);
+      });
       elements.challengesGrid.appendChild(card);
     });
   }
@@ -669,6 +674,12 @@
   function openChallengeModal(challengeId) {
     const c = state.challenges.find(item => item.id === challengeId);
     if (!c) return;
+
+    // Locked questions cannot be opened
+    if (c.isLocked) {
+      showToast(`🔒 "${c.title}" is locked by administrators and cannot be opened.`, 'error');
+      return;
+    }
 
     state.currentModalChallengeId = challengeId;
 
@@ -685,12 +696,8 @@
       elements.modalSolvesCount.textContent = `${c.solveCount || 0} solves`;
     }
 
-    // Header status badge
-    if (c.isLocked) {
-      elements.modalSolvedStatus.style.display = 'inline-flex';
-      elements.modalSolvedStatus.className = 'card-status-pill pill-locked';
-      elements.modalSolvedStatus.innerHTML = '🔒 LOCKED';
-    } else if (c.isSolved) {
+    // Solved status pill in header
+    if (c.isSolved) {
       elements.modalSolvedStatus.style.display = 'inline-flex';
       elements.modalSolvedStatus.className = 'card-status-pill pill-solved';
       elements.modalSolvedStatus.innerHTML = '✓ SOLVED';
@@ -700,99 +707,78 @@
       elements.modalSolvedStatus.innerHTML = '○ UNSOLVED';
     }
 
-    // When question is locked: show name and locked banner, HIDE description, attachments, hints, and submission form
-    if (c.isLocked) {
-      if (elements.modalSolveBanner) elements.modalSolveBanner.style.display = 'none';
-      if (elements.modalLockedBanner) elements.modalLockedBanner.style.display = 'flex';
-
-      elements.modalDescription.innerHTML = `
-        <div class="locked-modal-placeholder">
-          <div class="lock-big-icon">🔒</div>
-          <h3>Question Currently Locked</h3>
-          <p>This question has been locked by competition administrators. Only the question name is visible right now. The full brief, attachments, and flag submission will unlock when organizers activate it.</p>
-        </div>
-      `;
-
-      elements.modalAttachmentsSection.style.display = 'none';
-      elements.modalHintsSection.style.display = 'none';
-      if (elements.modalSubmissionSection) elements.modalSubmissionSection.style.display = 'none';
-    } else {
-      // Unlocked: reveal full description, attachments, hints, and submission box
-      if (elements.modalLockedBanner) elements.modalLockedBanner.style.display = 'none';
-      if (elements.modalSubmissionSection) elements.modalSubmissionSection.style.display = 'block';
-
-      // Solved/Unsolved status banner
-      if (elements.modalSolveBanner) {
-        if (c.isSolved) {
-          elements.modalSolveBanner.className = 'modal-solve-banner solved';
-          elements.modalSolveBanner.innerHTML = `<span>✓</span> <span><strong>SOLVED:</strong> You captured this flag and earned ${c.points} points!</span>`;
-          elements.modalSolveBanner.style.display = 'flex';
-        } else {
-          elements.modalSolveBanner.className = 'modal-solve-banner unsolved';
-          elements.modalSolveBanner.innerHTML = `<span>○</span> <span><strong>UNSOLVED:</strong> Find the flag and submit below to claim ${c.points} points.</span>`;
-          elements.modalSolveBanner.style.display = 'flex';
-        }
-      }
-
-      // Render formatted markdown description
-      elements.modalDescription.innerHTML = formatMarkdown(c.description || '');
-
-      // Attachments
-      if (c.attachments && c.attachments.length > 0) {
-        elements.modalAttachmentsSection.style.display = 'flex';
-        elements.modalAttachmentsList.innerHTML = '';
-        c.attachments.forEach(att => {
-          const chip = document.createElement('a');
-          chip.href = att.url;
-          chip.download = att.name;
-          chip.className = 'attachment-chip';
-          chip.innerHTML = `
-            <span>📥 Download <strong>${escapeHtml(att.name)}</strong></span>
-            <span class="attachment-size">(${att.size})</span>
-          `;
-          elements.modalAttachmentsList.appendChild(chip);
-        });
-      } else {
-        elements.modalAttachmentsSection.style.display = 'none';
-      }
-
-      // Hints
-      if (c.hints && c.hints.length > 0) {
-        elements.modalHintsSection.style.display = 'flex';
-        elements.modalHintsList.innerHTML = '';
-        c.hints.forEach((hint, idx) => {
-          const details = document.createElement('details');
-          details.className = 'hint-details';
-          details.innerHTML = `
-            <summary class="hint-summary">💡 Reveal Hint ${idx + 1}</summary>
-            <div class="hint-content">${formatMarkdown(hint)}</div>
-          `;
-          elements.modalHintsList.appendChild(details);
-        });
-      } else {
-        elements.modalHintsSection.style.display = 'none';
-      }
-
-      // Flag input state
-      elements.flagInput.value = '';
-      elements.flagFeedback.style.display = 'none';
-
+    // Modal prominent status banner
+    if (elements.modalSolveBanner) {
       if (c.isSolved) {
-        elements.flagInput.disabled = true;
-        elements.flagInput.placeholder = 'Challenge already solved by your account';
-        elements.flagSubmitBtn.disabled = true;
-        elements.flagSubmitBtn.textContent = 'Already Solved';
-      } else if (!state.currentUser) {
-        elements.flagInput.disabled = true;
-        elements.flagInput.placeholder = 'Log in to submit flags and claim points';
-        elements.flagSubmitBtn.disabled = true;
-        elements.flagSubmitBtn.textContent = 'Login Required';
+        elements.modalSolveBanner.className = 'modal-solve-banner solved';
+        elements.modalSolveBanner.innerHTML = `<span>✓</span> <span><strong>SOLVED:</strong> You captured this flag and earned ${c.points} points!</span>`;
+        elements.modalSolveBanner.style.display = 'flex';
       } else {
-        elements.flagInput.disabled = false;
-        elements.flagInput.placeholder = 'KRYPTEIA{...}';
-        elements.flagSubmitBtn.disabled = false;
-        elements.flagSubmitBtn.textContent = 'Submit Flag';
+        elements.modalSolveBanner.className = 'modal-solve-banner unsolved';
+        elements.modalSolveBanner.innerHTML = `<span>○</span> <span><strong>UNSOLVED:</strong> Find the flag and submit below to claim ${c.points} points.</span>`;
+        elements.modalSolveBanner.style.display = 'flex';
       }
+    }
+
+    // Render formatted markdown description
+    elements.modalDescription.innerHTML = formatMarkdown(c.description);
+
+    // Attachments
+    if (c.attachments && c.attachments.length > 0) {
+      elements.modalAttachmentsSection.style.display = 'flex';
+      elements.modalAttachmentsList.innerHTML = '';
+      c.attachments.forEach(att => {
+        const chip = document.createElement('a');
+        chip.href = att.url;
+        chip.download = att.name;
+        chip.className = 'attachment-chip';
+        chip.innerHTML = `
+          <span>📥 Download <strong>${escapeHtml(att.name)}</strong></span>
+          <span class="attachment-size">(${att.size})</span>
+        `;
+        elements.modalAttachmentsList.appendChild(chip);
+      });
+    } else {
+      elements.modalAttachmentsSection.style.display = 'none';
+    }
+
+    // Hints
+    if (c.hints && c.hints.length > 0) {
+      elements.modalHintsSection.style.display = 'flex';
+      elements.modalHintsList.innerHTML = '';
+      c.hints.forEach((hint, idx) => {
+        const details = document.createElement('details');
+        details.className = 'hint-details';
+        details.innerHTML = `
+          <summary class="hint-summary">💡 Reveal Hint ${idx + 1}</summary>
+          <div class="hint-content">${formatMarkdown(hint)}</div>
+        `;
+        elements.modalHintsList.appendChild(details);
+      });
+    } else {
+      elements.modalHintsSection.style.display = 'none';
+    }
+
+    // Flag input & lock states
+    elements.flagInput.value = '';
+    elements.flagFeedback.style.display = 'none';
+
+    if (elements.modalLockedBanner) elements.modalLockedBanner.style.display = 'none';
+    if (c.isSolved) {
+      elements.flagInput.disabled = true;
+      elements.flagInput.placeholder = 'Challenge already solved by your account';
+      elements.flagSubmitBtn.disabled = true;
+      elements.flagSubmitBtn.textContent = 'Already Solved';
+    } else if (!state.currentUser) {
+      elements.flagInput.disabled = true;
+      elements.flagInput.placeholder = 'Log in to submit flags and claim points';
+      elements.flagSubmitBtn.disabled = true;
+      elements.flagSubmitBtn.textContent = 'Login Required';
+    } else {
+      elements.flagInput.disabled = false;
+      elements.flagInput.placeholder = 'KRYPTEIA{...}';
+      elements.flagSubmitBtn.disabled = false;
+      elements.flagSubmitBtn.textContent = 'Submit Flag';
     }
 
     elements.challengeModal.classList.add('open');
@@ -806,19 +792,23 @@
     state.currentModalChallengeId = null;
   }
 
-  // Navigate between challenges inside modal
+  // Navigate between unlocked challenges inside modal
   function navigatePreviousChallenge() {
-    if (!state.currentModalChallengeId || state.challenges.length === 0) return;
-    const currentIndex = state.challenges.findIndex(c => c.id === state.currentModalChallengeId);
-    const prevIndex = (currentIndex - 1 + state.challenges.length) % state.challenges.length;
-    openChallengeModal(state.challenges[prevIndex].id);
+    const unlocked = state.challenges.filter(c => !c.isLocked);
+    if (!state.currentModalChallengeId || unlocked.length === 0) return;
+    const currentIndex = unlocked.findIndex(c => c.id === state.currentModalChallengeId);
+    if (currentIndex === -1) return;
+    const prevIndex = (currentIndex - 1 + unlocked.length) % unlocked.length;
+    openChallengeModal(unlocked[prevIndex].id);
   }
 
   function navigateNextChallenge() {
-    if (!state.currentModalChallengeId || state.challenges.length === 0) return;
-    const currentIndex = state.challenges.findIndex(c => c.id === state.currentModalChallengeId);
-    const nextIndex = (currentIndex + 1) % state.challenges.length;
-    openChallengeModal(state.challenges[nextIndex].id);
+    const unlocked = state.challenges.filter(c => !c.isLocked);
+    if (!state.currentModalChallengeId || unlocked.length === 0) return;
+    const currentIndex = unlocked.findIndex(c => c.id === state.currentModalChallengeId);
+    if (currentIndex === -1) return;
+    const nextIndex = (currentIndex + 1) % unlocked.length;
+    openChallengeModal(unlocked[nextIndex].id);
   }
 
   // Flag Submission Handler
