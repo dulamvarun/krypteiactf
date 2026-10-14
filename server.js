@@ -58,6 +58,51 @@ function authMiddleware(req, res, next) {
 
 app.use(authMiddleware);
 
+// --- Real-Time Server-Sent Events (SSE) Live Synchronization ---
+const sseClients = new Set();
+
+function notifyParticipants(eventType, data = {}) {
+  const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.res.write(payload);
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  }
+}
+
+app.get('/api/events/live-sync', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  const client = { id: Date.now() + Math.random(), res };
+  sseClients.add(client);
+
+  // Send handshake message
+  res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, timestamp: Date.now() })}\n\n`);
+
+  // Heartbeat ping every 15 seconds
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch (e) {
+      clearInterval(heartbeat);
+      sseClients.delete(client);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(client);
+  });
+});
+
 // --- Challenge Interactive Diagnostic Routes ---
 // 1. For Challenge web-01 (Header / debug inspection)
 app.get('/api/diagnostics/vault-status', (req, res) => {
@@ -290,6 +335,13 @@ app.post('/api/submit-flag', (req, res) => {
 
   // Newly solved! Fetch updated participant stats
   const updatedStats = db.getUserStats(req.user.id);
+  const solveCounts = db.getChallengeSolveCounts();
+
+  // Broadcast live solve event to participants
+  notifyParticipants('challenge_solved', {
+    challengeId,
+    solveCount: solveCounts[challengeId] || 1
+  });
 
   res.json({
     success: true,
@@ -470,6 +522,7 @@ app.post('/api/admin/timer', adminAuthMiddleware, (req, res) => {
   }
 
   const updatedConfig = db.setCompetitionTimer(startDate.toISOString(), endDateIso, status);
+  notifyParticipants('timer_updated', { config: updatedConfig });
   res.json({
     success: true,
     message: 'Competition timer updated successfully',
@@ -485,6 +538,10 @@ app.post('/api/admin/challenge-lock', adminAuthMiddleware, (req, res) => {
   }
 
   db.setChallengeLock(challengeId, Boolean(isLocked));
+  notifyParticipants('challenge_lock_updated', {
+    challengeId,
+    isLocked: Boolean(isLocked)
+  });
   res.json({
     success: true,
     challengeId,
@@ -498,6 +555,10 @@ app.post('/api/admin/challenge-lock-all', adminAuthMiddleware, (req, res) => {
   const { isLocked } = req.body;
   const allIds = db.getAllChallengeIds();
   const locks = db.setAllChallengeLocks(allIds, Boolean(isLocked));
+  notifyParticipants('challenge_lock_all_updated', {
+    isLocked: Boolean(isLocked),
+    locks
+  });
   res.json({
     success: true,
     isLocked: Boolean(isLocked),
@@ -520,6 +581,7 @@ app.get('/api/admin/export-leaderboard', adminAuthMiddleware, (req, res) => {
 // 8. Clear / Reset Leaderboard and Participants
 app.post('/api/admin/reset-leaderboard', adminAuthMiddleware, (req, res) => {
   const result = db.clearAllParticipants();
+  notifyParticipants('leaderboard_reset', {});
   res.json({
     success: true,
     message: 'Leaderboard and participant accounts cleared successfully.'
@@ -532,6 +594,11 @@ app.post('/api/admin/reset-leaderboard', adminAuthMiddleware, (req, res) => {
 app.post('/api/admin/challenges', adminAuthMiddleware, (req, res) => {
   try {
     const created = db.createChallenge(req.body);
+    notifyParticipants('challenge_created', {
+      challengeId: created.id,
+      title: created.title,
+      category: created.category
+    });
     res.json({
       success: true,
       message: `Challenge "${created.title}" (${created.id}) created successfully with secure salted HMAC flag storage!`,
@@ -546,6 +613,10 @@ app.post('/api/admin/challenges', adminAuthMiddleware, (req, res) => {
 app.put('/api/admin/challenges/:id', adminAuthMiddleware, (req, res) => {
   try {
     const updated = db.updateChallenge(req.params.id, req.body);
+    notifyParticipants('challenge_updated', {
+      challengeId: updated.id,
+      title: updated.title
+    });
     res.json({
       success: true,
       message: `Challenge "${updated.title}" (${updated.id}) updated successfully!`,
@@ -560,6 +631,9 @@ app.put('/api/admin/challenges/:id', adminAuthMiddleware, (req, res) => {
 app.delete('/api/admin/challenges/:id', adminAuthMiddleware, (req, res) => {
   try {
     db.deleteChallenge(req.params.id);
+    notifyParticipants('challenge_deleted', {
+      challengeId: req.params.id
+    });
     res.json({
       success: true,
       message: `Challenge "${req.params.id}" has been deleted successfully.`

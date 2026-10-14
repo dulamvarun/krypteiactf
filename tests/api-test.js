@@ -265,6 +265,56 @@ async function runTests() {
     assert.strictEqual(db.getChallengeById('rev-01'), null);
     console.log('  ✓ Admin challenge deletion works cleanly');
 
+    // Test 16: Real-time Server-Sent Events (SSE) Live Sync
+    console.log('[16] Testing /api/events/live-sync real-time push streaming');
+    const receivedEvents = [];
+    let sseClientReq;
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (sseClientReq) sseClientReq.destroy();
+        reject(new Error('SSE connection timed out waiting for event'));
+      }, 5000);
+
+      sseClientReq = http.get(`${baseUrl}/api/events/live-sync`, (res) => {
+        assert.strictEqual(res.statusCode, 200);
+        assert.ok(res.headers['content-type'].includes('text/event-stream'));
+
+        res.on('data', async (chunk) => {
+          const str = chunk.toString();
+          if (str.includes('event: connected')) {
+            receivedEvents.push('connected');
+            // Trigger an admin lock action to test broadcast delivery
+            await request('/api/admin/challenge-lock', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${adminToken}` },
+              body: { challengeId: 'crypto-01', isLocked: true }
+            });
+          }
+          if (str.includes('event: challenge_lock_updated')) {
+            receivedEvents.push('challenge_lock_updated');
+            clearTimeout(timeout);
+            // Revert lock back to unlocked
+            await request('/api/admin/challenge-lock', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${adminToken}` },
+              body: { challengeId: 'crypto-01', isLocked: false }
+            });
+            sseClientReq.destroy();
+            resolve();
+          }
+        });
+      });
+
+      sseClientReq.on('error', (err) => {
+        if (err.code !== 'ECONNRESET') reject(err);
+      });
+    });
+
+    assert.ok(receivedEvents.includes('connected'), 'SSE did not send connected event');
+    assert.ok(receivedEvents.includes('challenge_lock_updated'), 'SSE did not broadcast challenge_lock_updated event');
+    console.log('  ✓ Server-Sent Events live stream broadcasts admin modifications in real-time');
+
     console.log('\n>>> ALL BACKEND API TESTS PASSED SUCCESSFULLY! <<<');
   } finally {
     db.clearAllParticipants();

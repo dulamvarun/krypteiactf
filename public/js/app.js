@@ -32,6 +32,7 @@
       await Promise.all([loadConfig(), loadUserSession()]);
       await loadChallenges();
       startCountdownTimer();
+      initLiveSync();
       startLivePolling();
     } catch (err) {
       console.error('Initialization error:', err);
@@ -453,7 +454,274 @@
     state.timerInterval = setInterval(update, 1000);
   }
 
-  // Live dynamic polling to keep standings, solve counts, and ranks updated
+  // =====================================================================
+  // REAL-TIME SYNCHRONIZATION VIA SERVER-SENT EVENTS (SSE)
+  // Reflects Admin Portal changes on Participant Portal without page refresh
+  // =====================================================================
+  let liveEventSource = null;
+
+  function initLiveSync() {
+    if (typeof window.EventSource === 'undefined') {
+      console.warn('SSE not supported in this browser; falling back to dynamic polling.');
+      return;
+    }
+
+    if (liveEventSource) {
+      try { liveEventSource.close(); } catch (e) {}
+    }
+
+    try {
+      liveEventSource = new EventSource('/api/events/live-sync');
+    } catch (e) {
+      console.warn('Failed to establish SSE live sync:', e);
+      return;
+    }
+
+    liveEventSource.addEventListener('connected', () => {
+      console.log('⚡ Live synchronization connected with Krypteia CTF Server.');
+    });
+
+    // 1. Challenge Lock / Unlock (Individual)
+    liveEventSource.addEventListener('challenge_lock_updated', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleLiveLockUpdate(data.challengeId, data.isLocked);
+      } catch (e) {
+        console.error('Error handling challenge_lock_updated:', e);
+      }
+    });
+
+    // 2. Challenge Lock / Unlock All (Bulk)
+    liveEventSource.addEventListener('challenge_lock_all_updated', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleLiveLockAll(data.isLocked, data.locks);
+      } catch (e) {
+        console.error('Error handling challenge_lock_all_updated:', e);
+      }
+    });
+
+    // 3. Challenge Created
+    liveEventSource.addEventListener('challenge_created', async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        await handleLiveChallengeCreated(data);
+      } catch (e) {
+        console.error('Error handling challenge_created:', e);
+      }
+    });
+
+    // 4. Challenge Updated (Edits to description, points, hints, attachments, title)
+    liveEventSource.addEventListener('challenge_updated', async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        await handleLiveChallengeUpdated(data);
+      } catch (e) {
+        console.error('Error handling challenge_updated:', e);
+      }
+    });
+
+    // 5. Challenge Deleted
+    liveEventSource.addEventListener('challenge_deleted', async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        await handleLiveChallengeDeleted(data.challengeId);
+      } catch (e) {
+        console.error('Error handling challenge_deleted:', e);
+      }
+    });
+
+    // 6. Competition Timer / Arena State Kickoff
+    liveEventSource.addEventListener('timer_updated', async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        await handleLiveTimerUpdated(data.config);
+      } catch (e) {
+        console.error('Error handling timer_updated:', e);
+      }
+    });
+
+    // 7. Solve Count Updated
+    liveEventSource.addEventListener('challenge_solved', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleLiveSolveUpdated(data.challengeId, data.solveCount);
+      } catch (e) {
+        console.error('Error handling challenge_solved:', e);
+      }
+    });
+
+    // 8. Leaderboard & Participant Reset
+    liveEventSource.addEventListener('leaderboard_reset', async () => {
+      try {
+        showToast('ℹ️ Standings reset by administrator.', 'info');
+        await Promise.all([loadConfig(), loadUserSession(), loadChallenges()]);
+        if (state.activeTab === 'leaderboard') await loadLeaderboard();
+      } catch (e) {
+        console.error('Error handling leaderboard_reset:', e);
+      }
+    });
+
+    liveEventSource.onerror = () => {
+      // EventSource automatically handles reconnection
+      console.warn('Live sync SSE connection interrupted; waiting for auto-reconnect...');
+    };
+  }
+
+  function handleLiveLockUpdate(challengeId, isLocked) {
+    const ch = state.challenges.find(c => c.id === challengeId);
+    if (ch) {
+      ch.isLocked = isLocked;
+      renderChallenges();
+    }
+
+    if (state.currentModalChallengeId === challengeId) {
+      if (isLocked) {
+        closeChallengeModal();
+        showToast('🔒 This question was just locked by the administrator.', 'info');
+      } else {
+        openChallengeModal(challengeId);
+        showToast('🔓 This question is now unlocked and available!', 'success');
+      }
+    }
+  }
+
+  function handleLiveLockAll(isLocked, locks) {
+    state.challenges.forEach(c => {
+      if (locks && locks[c.id] !== undefined) {
+        c.isLocked = locks[c.id];
+      } else {
+        c.isLocked = isLocked;
+      }
+    });
+    renderChallenges();
+
+    if (state.currentModalChallengeId) {
+      const modalCh = state.challenges.find(c => c.id === state.currentModalChallengeId);
+      if (modalCh && modalCh.isLocked) {
+        closeChallengeModal();
+        showToast('🔒 All challenges have been locked by the administrator.', 'info');
+      }
+    }
+
+    showToast(isLocked ? '🔒 All challenges locked by administrator.' : '🔓 All challenges unlocked!', 'info');
+  }
+
+  async function handleLiveChallengeCreated(data) {
+    await loadChallenges();
+    await loadConfig();
+    showToast(`✨ New challenge available: "${data.title || 'Challenge'}"!`, 'info');
+  }
+
+  async function handleLiveChallengeUpdated(data) {
+    const res = await API.getChallenges();
+    if (res && res.challenges) {
+      state.challenges = res.challenges;
+      renderCategoryFilters();
+      renderChallenges();
+
+      if (state.currentModalChallengeId === data.challengeId) {
+        const updated = state.challenges.find(c => c.id === data.challengeId);
+        if (updated) {
+          if (updated.isLocked) {
+            closeChallengeModal();
+            showToast('🔒 This question was locked by the administrator.', 'info');
+          } else {
+            // Live update modal contents
+            if (elements.modalTitle) elements.modalTitle.textContent = updated.title;
+            if (elements.modalCategory) elements.modalCategory.textContent = updated.category;
+            if (elements.modalPoints) elements.modalPoints.textContent = `${updated.points} PTS`;
+            if (elements.modalDifficulty) {
+              elements.modalDifficulty.textContent = updated.difficulty;
+              elements.modalDifficulty.className = `difficulty-pill diff-${updated.difficulty.toLowerCase()}`;
+            }
+            if (elements.modalDescription) {
+              elements.modalDescription.innerHTML = formatMarkdown(updated.description);
+            }
+
+            if (elements.modalAttachmentsSection && elements.modalAttachmentsList) {
+              if (updated.attachments && updated.attachments.length > 0) {
+                elements.modalAttachmentsSection.style.display = 'flex';
+                elements.modalAttachmentsList.innerHTML = '';
+                updated.attachments.forEach(att => {
+                  const chip = document.createElement('a');
+                  chip.href = att.url;
+                  chip.download = att.name;
+                  chip.className = 'attachment-chip';
+                  chip.innerHTML = `
+                    <span>📥 Download <strong>${escapeHtml(att.name)}</strong></span>
+                    <span class="attachment-size">(${att.size})</span>
+                  `;
+                  elements.modalAttachmentsList.appendChild(chip);
+                });
+              } else {
+                elements.modalAttachmentsSection.style.display = 'none';
+              }
+            }
+
+            if (elements.modalHintsSection && elements.modalHintsList) {
+              if (updated.hints && updated.hints.length > 0) {
+                elements.modalHintsSection.style.display = 'flex';
+                elements.modalHintsList.innerHTML = '';
+                updated.hints.forEach((hint, idx) => {
+                  const details = document.createElement('details');
+                  details.className = 'hint-details';
+                  details.innerHTML = `
+                    <summary class="hint-summary">💡 Reveal Hint ${idx + 1}</summary>
+                    <div class="hint-content">${formatMarkdown(hint)}</div>
+                  `;
+                  elements.modalHintsList.appendChild(details);
+                });
+              } else {
+                elements.modalHintsSection.style.display = 'none';
+              }
+            }
+
+            showToast(`ℹ️ "${updated.title}" challenge details have been updated.`, 'info');
+          }
+        }
+      }
+    }
+  }
+
+  async function handleLiveChallengeDeleted(challengeId) {
+    if (state.currentModalChallengeId === challengeId) {
+      closeChallengeModal();
+      showToast('⚠️ The challenge you were viewing was removed by the organizers.', 'warning');
+    }
+    await loadChallenges();
+    await loadConfig();
+  }
+
+  async function handleLiveTimerUpdated(newConfig) {
+    if (newConfig) {
+      state.config = { ...state.config, ...newConfig };
+    }
+    await loadConfig();
+    await loadChallenges();
+    startCountdownTimer();
+    if (state.config && state.config.isStarted) {
+      showToast('⚡ Competition arena status updated: LIVE', 'info');
+    } else {
+      showToast('🕒 Competition schedule updated by administrator.', 'info');
+    }
+  }
+
+  function handleLiveSolveUpdated(challengeId, solveCount) {
+    const ch = state.challenges.find(c => c.id === challengeId);
+    if (ch) {
+      ch.solveCount = solveCount;
+      renderChallenges();
+      if (state.currentModalChallengeId === challengeId && elements.modalSolvesCount) {
+        elements.modalSolvesCount.textContent = `${solveCount} solves`;
+      }
+    }
+    if (state.activeTab === 'leaderboard') {
+      loadLeaderboard();
+    }
+  }
+
+  // Live dynamic polling to keep standings, solve counts, and ranks updated (resilient fallback)
   let livePollingInterval = null;
   function startLivePolling() {
     if (livePollingInterval) clearInterval(livePollingInterval);
@@ -464,37 +732,6 @@
       try {
         if (state.activeTab === 'leaderboard') {
           await loadLeaderboard();
-        } else if (state.activeTab === 'challenges') {
-          // Poll config to detect timer changes from admin
-          if (Math.random() < 0.3) {
-            await loadConfig();
-          }
-
-          const res = await API.getChallenges();
-          if (res && res.challenges) {
-            let hasChanges = false;
-            res.challenges.forEach(freshCh => {
-              const current = state.challenges.find(c => c.id === freshCh.id);
-              if (current) {
-                if (current.solveCount !== freshCh.solveCount || current.isSolved !== freshCh.isSolved || current.isLocked !== freshCh.isLocked) {
-                  current.solveCount = freshCh.solveCount;
-                  current.isSolved = freshCh.isSolved;
-                  current.isLocked = freshCh.isLocked;
-                  hasChanges = true;
-                }
-              }
-            });
-
-            if (hasChanges) {
-              renderChallenges();
-              if (state.currentModalChallengeId && elements.modalSolvesCount) {
-                const modalCh = state.challenges.find(c => c.id === state.currentModalChallengeId);
-                if (modalCh) {
-                  elements.modalSolvesCount.textContent = `${modalCh.solveCount || 0} solves`;
-                }
-              }
-            }
-          }
         }
 
         // Keep current participant stats & rank in sync
@@ -507,10 +744,69 @@
             updateUserUI();
           }
         }
+
+        // Periodically verify config (timer / kickoff changes)
+        const freshConfig = await API.getConfig();
+        if (freshConfig && state.config) {
+          if (freshConfig.isStarted !== state.config.isStarted || 
+              freshConfig.startTime !== state.config.startTime || 
+              freshConfig.isEnded !== state.config.isEnded ||
+              freshConfig.totalChallenges !== state.config.totalChallenges) {
+            state.config = freshConfig;
+            await loadConfig();
+          }
+        }
+
+        // Authoritative reconciliation of challenges
+        const res = await API.getChallenges();
+        if (res && res.challenges) {
+          const fresh = res.challenges;
+          let needsRerender = false;
+
+          if (fresh.length !== state.challenges.length) {
+            needsRerender = true;
+          } else {
+            for (let i = 0; i < fresh.length; i++) {
+              const f = fresh[i];
+              const cur = state.challenges.find(c => c.id === f.id);
+              if (!cur || 
+                  cur.title !== f.title || 
+                  cur.points !== f.points || 
+                  cur.difficulty !== f.difficulty || 
+                  cur.isLocked !== f.isLocked || 
+                  cur.isSolved !== f.isSolved || 
+                  cur.solveCount !== f.solveCount ||
+                  cur.description !== f.description) {
+                needsRerender = true;
+                break;
+              }
+            }
+          }
+
+          if (needsRerender) {
+            state.challenges = fresh;
+            renderCategoryFilters();
+            renderChallenges();
+
+            // Reconcile open modal
+            if (state.currentModalChallengeId) {
+              const currentModalCh = state.challenges.find(c => c.id === state.currentModalChallengeId);
+              if (!currentModalCh) {
+                closeChallengeModal();
+                showToast('⚠️ The challenge you were viewing was removed.', 'warning');
+              } else if (currentModalCh.isLocked) {
+                closeChallengeModal();
+                showToast('🔒 This question was locked by the administrator.', 'info');
+              } else if (elements.modalSolvesCount) {
+                elements.modalSolvesCount.textContent = `${currentModalCh.solveCount || 0} solves`;
+              }
+            }
+          }
+        }
       } catch (err) {
         // Background polling errors silent
       }
-    }, 4000);
+    }, 3000);
   }
 
   // Load Challenges
@@ -521,9 +817,12 @@
       renderCategoryFilters();
       renderChallenges();
 
-      // Update solve count in banner
+      // Update solve count & total in banner
       if (state.currentUser && elements.metricSolves) {
         elements.metricSolves.textContent = `${res.solvedCount || 0}`;
+      }
+      if (elements.metricTotal) {
+        elements.metricTotal.textContent = `${res.totalCount || state.challenges.length || 8}`;
       }
     } catch (err) {
       console.error('Failed to load challenges:', err);

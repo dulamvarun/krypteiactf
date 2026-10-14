@@ -292,6 +292,7 @@
 
     populateDashboard(data);
     startPolling();
+    startAdminLiveSync();
   }
 
   function onUnauthenticated() {
@@ -301,6 +302,7 @@
     if (el.adminLogoutBtn) el.adminLogoutBtn.style.display = 'none';
 
     stopPolling();
+    stopAdminLiveSync();
   }
 
   // --- Login Handler ---
@@ -367,7 +369,39 @@
     onUnauthenticated();
   }
 
-  // --- Live Polling ---
+  // --- Live Polling & Real-time Live Sync ---
+  let adminEventSource = null;
+
+  function startAdminLiveSync() {
+    if (typeof window.EventSource === 'undefined') return;
+    stopAdminLiveSync();
+    try {
+      adminEventSource = new EventSource('/api/events/live-sync');
+      const refreshEvents = [
+        'challenge_solved',
+        'timer_updated',
+        'challenge_lock_updated',
+        'challenge_lock_all_updated',
+        'challenge_created',
+        'challenge_updated',
+        'challenge_deleted',
+        'leaderboard_reset'
+      ];
+      refreshEvents.forEach(evt => {
+        adminEventSource.addEventListener(evt, () => {
+          fetchAdminData();
+        });
+      });
+    } catch (_) {}
+  }
+
+  function stopAdminLiveSync() {
+    if (adminEventSource) {
+      try { adminEventSource.close(); } catch (_) {}
+      adminEventSource = null;
+    }
+  }
+
   function startPolling() {
     stopPolling();
     state.pollTimer = setInterval(fetchAdminData, 5000);
@@ -806,6 +840,35 @@
       await fetchAdminData();
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  }
+
+  async function handleToggleLock(challengeId, newLockState) {
+    try {
+      const res = await adminFetch('/api/admin/challenge-lock', {
+        method: 'POST',
+        body: {
+          challengeId,
+          isLocked: Boolean(newLockState)
+        }
+      });
+      showToast(res.message || `Challenge ${newLockState ? 'locked 🔒' : 'unlocked 🔓'}`, 'success');
+      await fetchAdminData();
+    } catch (err) {
+      showToast(err.message || 'Failed to toggle challenge lock', 'error');
+    }
+  }
+
+  async function handleBulkLock(isLocked) {
+    try {
+      const res = await adminFetch('/api/admin/challenge-lock-all', {
+        method: 'POST',
+        body: { isLocked: Boolean(isLocked) }
+      });
+      showToast(res.message || `All challenges ${isLocked ? 'locked 🔒' : 'unlocked 🔓'}`, 'success');
+      await fetchAdminData();
+    } catch (err) {
+      showToast(err.message || 'Failed to bulk lock challenges', 'error');
     }
   }
 
