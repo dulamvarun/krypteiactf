@@ -659,13 +659,16 @@
         </div>
       `;
 
-      card.addEventListener('click', () => {
-        if (isLocked) {
+      if (isLocked) {
+        card.style.cursor = 'not-allowed';
+        card.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
           showToast('🔒 This question will be available to solve when unlocked.', 'info');
-          return;
-        }
-        openChallengeModal(c.id);
-      });
+        });
+      } else {
+        card.addEventListener('click', () => openChallengeModal(c.id));
+      }
       elements.challengesGrid.appendChild(card);
     });
   }
@@ -675,8 +678,12 @@
     const c = state.challenges.find(item => item.id === challengeId);
     if (!c) return;
 
-    // Locked questions cannot be opened
+    // Locked questions cannot be opened under any condition
     if (c.isLocked) {
+      if (elements.challengeModal) {
+        elements.challengeModal.classList.remove('open');
+        elements.challengeModal.setAttribute('aria-hidden', 'true');
+      }
       showToast('🔒 This question will be available to solve when unlocked.', 'info');
       return;
     }
