@@ -2310,3 +2310,34 @@ a:hover {
   opacity: 1;
   color: var(--accent-green);
 }
+
+/* Locked Modal Placeholder */
+.locked-modal-placeholder {
+  background: rgba(229, 62, 62, 0.04);
+  border: 1px dashed rgba(229, 62, 62, 0.28);
+  border-radius: var(--radius-md);
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  margin: 1.2rem 0;
+}
+
+.lock-big-icon {
+  font-size: 2.6rem;
+  margin-bottom: 0.7rem;
+  line-height: 1;
+}
+
+.locked-modal-placeholder h3 {
+  color: #fc8181;
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.locked-modal-placeholder p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  max-width: 480px;
+  margin: 0 auto;
+}

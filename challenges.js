@@ -236,19 +236,22 @@ CHALLENGES.forEach(c => CHALLENGE_MAP.set(c.id, c));
  * Also attaches whether the user solved it and if it is locked.
  */
 function getPublicChallenges(userSolves = new Set(), solveCounts = {}, challengeLocks = {}) {
-  return CHALLENGES.map(c => ({
-    id: c.id,
-    title: c.title,
-    category: c.category,
-    difficulty: c.difficulty,
-    points: c.points,
-    description: c.description,
-    hints: c.hints,
-    attachments: c.attachments,
-    solveCount: solveCounts[c.id] || 0,
-    isSolved: userSolves.has(c.id),
-    isLocked: Boolean(challengeLocks[c.id])
-  }));
+  return CHALLENGES.map(c => {
+    const isLocked = Boolean(challengeLocks[c.id]);
+    return {
+      id: c.id,
+      title: c.title,
+      category: c.category,
+      difficulty: c.difficulty,
+      points: c.points,
+      description: isLocked ? '' : c.description,
+      hints: isLocked ? [] : c.hints,
+      attachments: isLocked ? [] : c.attachments,
+      solveCount: solveCounts[c.id] || 0,
+      isSolved: userSolves.has(c.id),
+      isLocked
+    };
+  });
 }
 
 /**
