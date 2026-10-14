@@ -69,6 +69,18 @@
     elements.countSolved = document.getElementById('count-solved');
     elements.modalSolveBanner = document.getElementById('modal-solve-banner');
 
+    // Pre-Event Standby Elements
+    elements.preEventCard = document.getElementById('pre-event-card');
+    elements.activeChallengesArea = document.getElementById('active-challenges-area');
+    elements.preDays = document.getElementById('pre-days');
+    elements.preHours = document.getElementById('pre-hours');
+    elements.preMinutes = document.getElementById('pre-minutes');
+    elements.preSeconds = document.getElementById('pre-seconds');
+    elements.preStartTimeIst = document.getElementById('pre-start-time-ist');
+    elements.preAuthNotice = document.getElementById('pre-auth-notice');
+    elements.preAuthBtn = document.getElementById('pre-auth-btn');
+    elements.modalLockedBanner = document.getElementById('modal-locked-banner');
+
     // Challenge Detail Modal
     elements.challengeModal = document.getElementById('challenge-modal');
     elements.modalCloseBtn = document.getElementById('modal-close-btn');
@@ -142,6 +154,13 @@
       elements.searchInput.addEventListener('input', (e) => {
         state.searchQuery = e.target.value.toLowerCase().trim();
         renderChallenges();
+      });
+    }
+
+    // Pre-event register / login button
+    if (elements.preAuthBtn) {
+      elements.preAuthBtn.addEventListener('click', () => {
+        openAuthModal('register');
       });
     }
 
@@ -274,10 +293,43 @@
       const cfg = await API.getConfig();
       state.config = cfg;
       if (elements.compTitle) elements.compTitle.textContent = cfg.name || 'KRYPTEIA CTF';
+      
+      const isStarted = cfg.isStarted !== false;
+
       if (elements.compStatusBadge) {
-        elements.compStatusBadge.innerHTML = `<span class="pulse-dot"></span> ${cfg.status || 'LIVE'}`;
+        if (!isStarted) {
+          elements.compStatusBadge.className = 'comp-badge upcoming';
+          elements.compStatusBadge.innerHTML = `<span class="pulse-dot amber"></span> SCHEDULED (IST)`;
+        } else if (cfg.isEnded) {
+          elements.compStatusBadge.className = 'comp-badge ended';
+          elements.compStatusBadge.textContent = 'ENDED';
+        } else {
+          elements.compStatusBadge.className = 'comp-badge live';
+          elements.compStatusBadge.innerHTML = `<span class="pulse-dot"></span> LIVE`;
+        }
       }
+
       if (elements.metricTotal) elements.metricTotal.textContent = cfg.totalChallenges || 8;
+
+      // Toggle Pre-Event Standby Card vs Active Challenges Area
+      if (elements.preEventCard && elements.activeChallengesArea) {
+        if (!isStarted) {
+          elements.preEventCard.style.display = 'block';
+          elements.activeChallengesArea.style.display = 'none';
+          if (elements.preStartTimeIst) elements.preStartTimeIst.textContent = cfg.startTimeIST || 'Scheduled';
+          if (state.currentUser && elements.preAuthNotice) {
+            elements.preAuthNotice.textContent = `Cadet "${state.currentUser.username}" is registered & authenticated. Ready for competition launch!`;
+          }
+          if (state.currentUser && elements.preAuthBtn) {
+            elements.preAuthBtn.style.display = 'none';
+          } else if (elements.preAuthBtn) {
+            elements.preAuthBtn.style.display = 'inline-flex';
+          }
+        } else {
+          elements.preEventCard.style.display = 'none';
+          elements.activeChallengesArea.style.display = 'block';
+        }
+      }
     } catch (e) {
       console.warn('Config fetch fallback:', e);
     }
@@ -310,6 +362,13 @@
       if (elements.metricScore) elements.metricScore.textContent = `${state.currentUser.totalPoints || 0} PTS`;
       if (elements.metricSolves) elements.metricSolves.textContent = `${state.currentUser.solvedCount || 0}`;
       if (elements.metricRank) elements.metricRank.textContent = `#${state.currentUser.rank || 1}`;
+
+      if (elements.preAuthNotice) {
+        elements.preAuthNotice.textContent = `Cadet "${state.currentUser.username}" is registered & authenticated. Ready for competition launch!`;
+      }
+      if (elements.preAuthBtn) {
+        elements.preAuthBtn.style.display = 'none';
+      }
     } else {
       if (elements.authBtn) elements.authBtn.style.display = 'inline-flex';
       if (elements.userPill) elements.userPill.style.display = 'none';
@@ -317,20 +376,62 @@
       if (elements.metricScore) elements.metricScore.textContent = `0 PTS`;
       if (elements.metricSolves) elements.metricSolves.textContent = `0`;
       if (elements.metricRank) elements.metricRank.textContent = `-`;
+
+      if (elements.preAuthNotice) {
+        elements.preAuthNotice.textContent = 'You can register your account and log in now while waiting.';
+      }
+      if (elements.preAuthBtn) {
+        elements.preAuthBtn.style.display = 'inline-flex';
+      }
     }
   }
 
-  // Countdown Timer
+  // Countdown Timer (Handles both Pre-Event countdown and Live Remaining timer)
   function startCountdownTimer() {
     if (state.timerInterval) clearInterval(state.timerInterval);
 
     function update() {
-      if (!state.config || !state.config.endTime) {
+      if (!state.config) return;
+
+      const now = new Date().getTime();
+      const isStarted = state.config.isStarted !== false;
+
+      // Case 1: Event has not started yet -> Countdown to IST Kickoff
+      if (!isStarted && state.config.startTime) {
+        const start = new Date(state.config.startTime).getTime();
+        const diff = start - now;
+
+        if (diff <= 0) {
+          // Event officially launched!
+          state.config.isStarted = true;
+          loadConfig();
+          loadChallenges();
+          showToast('🚀 KRYPTEIA CTF IS NOW LIVE! Arena Unlocked.', 'success');
+          return;
+        }
+
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+        if (elements.preDays) elements.preDays.textContent = String(days).padStart(2, '0');
+        if (elements.preHours) elements.preHours.textContent = String(hours).padStart(2, '0');
+        if (elements.preMinutes) elements.preMinutes.textContent = String(minutes).padStart(2, '0');
+        if (elements.preSeconds) elements.preSeconds.textContent = String(seconds).padStart(2, '0');
+
+        const totalHours = days * 24 + hours;
+        const fmt = `${String(totalHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        if (elements.countdownTimer) elements.countdownTimer.textContent = fmt;
+        return;
+      }
+
+      // Case 2: Event is Live -> Countdown until end
+      if (!state.config.endTime) {
         if (elements.countdownTimer) elements.countdownTimer.textContent = '21:00:00';
         return;
       }
 
-      const now = new Date().getTime();
       const end = new Date(state.config.endTime).getTime();
       const diff = end - now;
 
@@ -364,15 +465,21 @@
         if (state.activeTab === 'leaderboard') {
           await loadLeaderboard();
         } else if (state.activeTab === 'challenges') {
+          // Poll config to detect timer changes from admin
+          if (Math.random() < 0.3) {
+            await loadConfig();
+          }
+
           const res = await API.getChallenges();
           if (res && res.challenges) {
             let hasChanges = false;
             res.challenges.forEach(freshCh => {
               const current = state.challenges.find(c => c.id === freshCh.id);
               if (current) {
-                if (current.solveCount !== freshCh.solveCount || current.isSolved !== freshCh.isSolved) {
+                if (current.solveCount !== freshCh.solveCount || current.isSolved !== freshCh.isSolved || current.isLocked !== freshCh.isLocked) {
                   current.solveCount = freshCh.solveCount;
                   current.isSolved = freshCh.isSolved;
+                  current.isLocked = freshCh.isLocked;
                   hasChanges = true;
                 }
               }
@@ -507,7 +614,8 @@
 
     filtered.forEach(c => {
       const card = document.createElement('div');
-      card.className = `challenge-card ${c.isSolved ? 'solved' : 'unsolved'}`;
+      const isLocked = Boolean(c.isLocked);
+      card.className = `challenge-card ${c.isSolved ? 'solved' : 'unsolved'} ${isLocked ? 'locked' : ''}`;
       card.setAttribute('data-id', c.id);
 
       const diffClass = `diff-${c.difficulty.toLowerCase()}`;
@@ -518,13 +626,20 @@
         .replace(/`([^`]+)`/g, '$1')
         .substring(0, 110) + '...';
 
+      let statusBadgeHtml = '';
+      if (isLocked) {
+        statusBadgeHtml = `<span class="card-status-pill pill-locked">🔒 LOCKED</span>`;
+      } else if (c.isSolved) {
+        statusBadgeHtml = `<span class="card-status-pill pill-solved">✓ SOLVED</span>`;
+      } else {
+        statusBadgeHtml = `<span class="card-status-pill pill-unsolved">○ UNSOLVED</span>`;
+      }
+
       card.innerHTML = `
         <div class="card-top-row">
           <span class="card-category-pill">${escapeHtml(c.category)}</span>
           <div class="card-badges-group">
-            <span class="card-status-pill ${c.isSolved ? 'pill-solved' : 'pill-unsolved'}">
-              ${c.isSolved ? '✓ SOLVED' : '○ UNSOLVED'}
-            </span>
+            ${statusBadgeHtml}
             <span class="card-points-badge ${c.isSolved ? 'points-solved' : ''}">
               ${c.isSolved ? `✓ ${c.points} PTS` : `${c.points} PTS`}
             </span>
@@ -532,14 +647,14 @@
         </div>
         <div class="card-main-content">
           <h3 class="card-title ${c.isSolved ? 'title-solved' : ''}">
-            ${c.isSolved ? '<span class="title-check">✓</span> ' : ''}${escapeHtml(c.title)}
+            ${c.isSolved ? '<span class="title-check">✓</span> ' : ''}${isLocked ? '<span style="color:#fc8181; margin-right:4px;">🔒</span>' : ''}${escapeHtml(c.title)}
           </h3>
-          <p class="card-preview-text">${escapeHtml(cleanDesc)}</p>
+          <p class="card-preview-text">${isLocked ? '<em style="color:var(--text-muted);">This challenge is currently locked by the organizers.</em>' : escapeHtml(cleanDesc)}</p>
         </div>
         <div class="card-bottom-row">
           <span class="difficulty-pill ${diffClass}">${escapeHtml(c.difficulty)}</span>
-          <div class="card-status-indicator ${c.isSolved ? 'solved-text' : 'unsolved-text'}">
-            ${c.isSolved ? `✓ SOLVED (${c.solveCount || 0} solves)` : `○ ${c.solveCount || 0} solves`}
+          <div class="card-status-indicator ${c.isSolved ? 'solved-text' : (isLocked ? 'locked-text' : 'unsolved-text')}">
+            ${isLocked ? '🔒 LOCKED' : (c.isSolved ? `✓ SOLVED (${c.solveCount || 0} solves)` : `○ ${c.solveCount || 0} solves`)}
           </div>
         </div>
       `;
@@ -632,25 +747,34 @@
       elements.modalHintsSection.style.display = 'none';
     }
 
-    // Flag input state
+    // Flag input & lock states
     elements.flagInput.value = '';
     elements.flagFeedback.style.display = 'none';
 
-    if (c.isSolved) {
+    if (c.isLocked) {
+      if (elements.modalLockedBanner) elements.modalLockedBanner.style.display = 'flex';
       elements.flagInput.disabled = true;
-      elements.flagInput.placeholder = 'Challenge already solved by your account';
+      elements.flagInput.placeholder = 'Challenge locked by administrators';
       elements.flagSubmitBtn.disabled = true;
-      elements.flagSubmitBtn.textContent = 'Already Solved';
-    } else if (!state.currentUser) {
-      elements.flagInput.disabled = true;
-      elements.flagInput.placeholder = 'Log in to submit flags and claim points';
-      elements.flagSubmitBtn.disabled = true;
-      elements.flagSubmitBtn.textContent = 'Login Required';
+      elements.flagSubmitBtn.textContent = '🔒 Question Locked';
     } else {
-      elements.flagInput.disabled = false;
-      elements.flagInput.placeholder = 'KRYPTEIA{...}';
-      elements.flagSubmitBtn.disabled = false;
-      elements.flagSubmitBtn.textContent = 'Submit Flag';
+      if (elements.modalLockedBanner) elements.modalLockedBanner.style.display = 'none';
+      if (c.isSolved) {
+        elements.flagInput.disabled = true;
+        elements.flagInput.placeholder = 'Challenge already solved by your account';
+        elements.flagSubmitBtn.disabled = true;
+        elements.flagSubmitBtn.textContent = 'Already Solved';
+      } else if (!state.currentUser) {
+        elements.flagInput.disabled = true;
+        elements.flagInput.placeholder = 'Log in to submit flags and claim points';
+        elements.flagSubmitBtn.disabled = true;
+        elements.flagSubmitBtn.textContent = 'Login Required';
+      } else {
+        elements.flagInput.disabled = false;
+        elements.flagInput.placeholder = 'KRYPTEIA{...}';
+        elements.flagSubmitBtn.disabled = false;
+        elements.flagSubmitBtn.textContent = 'Submit Flag';
+      }
     }
 
     elements.challengeModal.classList.add('open');

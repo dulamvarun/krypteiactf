@@ -101,6 +101,18 @@ try {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS challenge_locks (
+      challenge_id TEXT PRIMARY KEY,
+      is_locked INTEGER DEFAULT 0,
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      token TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
   `);
 
   useSqlite = true;
@@ -116,8 +128,10 @@ try {
 const memoryStore = {
   users: [],
   sessions: [],
+  adminSessions: [],
   solves: [],
   submissions: [],
+  challengeLocks: {},
   config: {
     competition_name: 'KRYPTEIA CTF 2026',
     club: 'Krypteia — The Cyber Security Technical Club',
@@ -692,10 +706,28 @@ function seedDemoDataIfNeeded() {
 initCompetitionConfigIfNeeded();
 seedDemoDataIfNeeded();
 
+// IST (Indian Standard Time) formatting helper
+function formatIST(dateInput) {
+  if (!dateInput) return 'N/A';
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return 'N/A';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }) + ' IST';
+}
+
 function getCompetitionConfig() {
+  let rawConfig;
   if (useSqlite) {
     const rows = sqliteDb.prepare('SELECT key, value FROM competition_config').all();
-    const config = {
+    rawConfig = {
       name: 'KRYPTEIA CTF 2026',
       club: 'Krypteia — The Cyber Security Technical Club',
       institution: "St. Peter's Engineering College",
@@ -705,17 +737,15 @@ function getCompetitionConfig() {
     };
 
     rows.forEach(r => {
-      if (r.key === 'competition_name') config.name = r.value;
-      if (r.key === 'club') config.club = r.value;
-      if (r.key === 'institution') config.institution = r.value;
-      if (r.key === 'status') config.status = r.value;
-      if (r.key === 'start_time') config.startTime = r.value;
-      if (r.key === 'end_time') config.endTime = r.value;
+      if (r.key === 'competition_name') rawConfig.name = r.value;
+      if (r.key === 'club') rawConfig.club = r.value;
+      if (r.key === 'institution') rawConfig.institution = r.value;
+      if (r.key === 'status') rawConfig.status = r.value;
+      if (r.key === 'start_time') rawConfig.startTime = r.value;
+      if (r.key === 'end_time') rawConfig.endTime = r.value;
     });
-
-    return config;
   } else {
-    return {
+    rawConfig = {
       name: memoryStore.config.competition_name,
       club: memoryStore.config.club,
       institution: memoryStore.config.institution,
@@ -724,6 +754,251 @@ function getCompetitionConfig() {
       endTime: memoryStore.config.end_time
     };
   }
+
+  const now = new Date();
+  const start = rawConfig.startTime ? new Date(rawConfig.startTime) : null;
+  const end = rawConfig.endTime ? new Date(rawConfig.endTime) : null;
+
+  let isStarted = true;
+  let isEnded = false;
+  let computedStatus = rawConfig.status || 'Live';
+
+  if (start && !isNaN(start.getTime()) && now < start) {
+    isStarted = false;
+    computedStatus = 'Upcoming';
+  } else if (end && !isNaN(end.getTime()) && now > end) {
+    isStarted = true;
+    isEnded = true;
+    computedStatus = 'Ended';
+  } else {
+    isStarted = true;
+    computedStatus = 'Live';
+  }
+
+  return {
+    ...rawConfig,
+    status: computedStatus,
+    isStarted,
+    isEnded,
+    serverTime: now.toISOString(),
+    startTimeIST: start ? formatIST(start) : 'N/A',
+    endTimeIST: end ? formatIST(end) : 'N/A',
+    serverTimeIST: formatIST(now)
+  };
+}
+
+function setCompetitionTimer(startTimeIso, endTimeIso = null, status = null) {
+  if (useSqlite) {
+    sqliteDb.transaction(() => {
+      const upsert = sqliteDb.prepare('INSERT OR REPLACE INTO competition_config (key, value) VALUES (?, ?)');
+      if (startTimeIso) upsert.run('start_time', startTimeIso);
+      if (endTimeIso) upsert.run('end_time', endTimeIso);
+      if (status) upsert.run('status', status);
+    })();
+  } else {
+    if (startTimeIso) memoryStore.config.start_time = startTimeIso;
+    if (endTimeIso) memoryStore.config.end_time = endTimeIso;
+    if (status) memoryStore.config.status = status;
+  }
+  return getCompetitionConfig();
+}
+
+// -------------------------------------------------------------
+// Challenge Locks Management
+// -------------------------------------------------------------
+function getChallengeLocks() {
+  const map = {};
+  if (useSqlite) {
+    const rows = sqliteDb.prepare('SELECT challenge_id, is_locked FROM challenge_locks').all();
+    rows.forEach(r => {
+      map[r.challenge_id] = Boolean(r.is_locked);
+    });
+  } else {
+    Object.keys(memoryStore.challengeLocks || {}).forEach(k => {
+      map[k] = Boolean(memoryStore.challengeLocks[k]);
+    });
+  }
+  return map;
+}
+
+function isChallengeLocked(challengeId) {
+  if (!challengeId) return false;
+  if (useSqlite) {
+    const row = sqliteDb.prepare('SELECT is_locked FROM challenge_locks WHERE challenge_id = ?').get(challengeId);
+    return row ? Boolean(row.is_locked) : false;
+  } else {
+    return Boolean((memoryStore.challengeLocks || {})[challengeId]);
+  }
+}
+
+function setChallengeLock(challengeId, isLocked) {
+  const val = isLocked ? 1 : 0;
+  const now = new Date().toISOString();
+  if (useSqlite) {
+    sqliteDb.prepare(`
+      INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
+    `).run(challengeId, val, now);
+  } else {
+    if (!memoryStore.challengeLocks) memoryStore.challengeLocks = {};
+    memoryStore.challengeLocks[challengeId] = Boolean(isLocked);
+  }
+  return { challengeId, isLocked: Boolean(isLocked) };
+}
+
+function setAllChallengeLocks(challengeIds, isLocked) {
+  const val = isLocked ? 1 : 0;
+  const now = new Date().toISOString();
+  if (useSqlite) {
+    sqliteDb.transaction(() => {
+      const stmt = sqliteDb.prepare(`
+        INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
+      `);
+      challengeIds.forEach(id => {
+        stmt.run(id, val, now);
+      });
+    })();
+  } else {
+    if (!memoryStore.challengeLocks) memoryStore.challengeLocks = {};
+    challengeIds.forEach(id => {
+      memoryStore.challengeLocks[id] = Boolean(isLocked);
+    });
+  }
+  return getChallengeLocks();
+}
+
+// -------------------------------------------------------------
+// Administrator Session Management
+// -------------------------------------------------------------
+function createAdminSession() {
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = new Date();
+  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
+
+  if (useSqlite) {
+    sqliteDb.prepare('INSERT INTO admin_sessions (token, created_at, expires_at) VALUES (?, ?, ?)')
+      .run(token, now.toISOString(), expires.toISOString());
+  } else {
+    if (!memoryStore.adminSessions) memoryStore.adminSessions = [];
+    memoryStore.adminSessions.push({
+      token,
+      created_at: now.toISOString(),
+      expires_at: expires.toISOString()
+    });
+  }
+  return token;
+}
+
+function validateAdminSession(token) {
+  if (!token) return false;
+  const now = new Date().toISOString();
+  if (useSqlite) {
+    const row = sqliteDb.prepare('SELECT token FROM admin_sessions WHERE token = ? AND expires_at > ?').get(token, now);
+    return Boolean(row);
+  } else {
+    const s = (memoryStore.adminSessions || []).find(item => item.token === token && item.expires_at > now);
+    return Boolean(s);
+  }
+}
+
+function deleteAdminSession(token) {
+  if (!token) return;
+  if (useSqlite) {
+    sqliteDb.prepare('DELETE FROM admin_sessions WHERE token = ?').run(token);
+  } else {
+    memoryStore.adminSessions = (memoryStore.adminSessions || []).filter(s => s.token !== token);
+  }
+}
+
+// -------------------------------------------------------------
+// Detailed Leaderboard Export & Sheet Generation
+// -------------------------------------------------------------
+function getDetailedLeaderboardForExport() {
+  const leaderboard = getLeaderboard();
+  if (useSqlite) {
+    const usersMap = {};
+    sqliteDb.prepare('SELECT id, email, created_at FROM users').all().forEach(u => {
+      usersMap[u.id] = u;
+    });
+
+    const solvesMap = {};
+    sqliteDb.prepare('SELECT user_id, challenge_id FROM solves ORDER BY solved_at ASC').all().forEach(s => {
+      if (!solvesMap[s.user_id]) solvesMap[s.user_id] = [];
+      solvesMap[s.user_id].push(s.challenge_id);
+    });
+
+    return leaderboard.map(entry => {
+      const user = usersMap[entry.userId] || {};
+      const solvedList = (solvesMap[entry.userId] || []).join('; ');
+      return {
+        rank: entry.rank,
+        username: entry.username,
+        email: user.email || 'N/A',
+        totalPoints: entry.totalPoints,
+        solvedCount: entry.solvedCount,
+        solvedChallenges: solvedList || 'None',
+        lastSolveTimeIST: entry.lastSolveTime ? formatIST(entry.lastSolveTime) : 'N/A',
+        registeredAtIST: user.created_at ? formatIST(user.created_at) : 'N/A'
+      };
+    });
+  } else {
+    return leaderboard.map(entry => {
+      const user = memoryStore.users.find(u => u.id === entry.userId) || {};
+      const solves = memoryStore.solves.filter(s => s.user_id === entry.userId);
+      const solvedList = solves.map(s => s.challenge_id).join('; ');
+      return {
+        rank: entry.rank,
+        username: entry.username,
+        email: user.email || 'N/A',
+        totalPoints: entry.totalPoints,
+        solvedCount: entry.solvedCount,
+        solvedChallenges: solvedList || 'None',
+        lastSolveTimeIST: entry.lastSolveTime ? formatIST(entry.lastSolveTime) : 'N/A',
+        registeredAtIST: user.created_at ? formatIST(user.created_at) : 'N/A'
+      };
+    });
+  }
+}
+
+function generateLeaderboardCSV() {
+  const data = getDetailedLeaderboardForExport();
+  const headers = [
+    'Rank',
+    'Username / Team',
+    'Email Address',
+    'Total Points',
+    'Challenges Solved Count',
+    'Solved Challenge IDs',
+    'Last Solve Time (IST)',
+    'Registration Time (IST)'
+  ];
+
+  const escapeCSV = (val) => {
+    if (val === null || val === undefined) return '""';
+    const s = String(val).replace(/"/g, '""');
+    return `"${s}"`;
+  };
+
+  const rows = [headers.map(escapeCSV).join(',')];
+
+  data.forEach(item => {
+    rows.push([
+      item.rank,
+      escapeCSV(item.username),
+      escapeCSV(item.email),
+      item.totalPoints,
+      item.solvedCount,
+      escapeCSV(item.solvedChallenges),
+      escapeCSV(item.lastSolveTimeIST),
+      escapeCSV(item.registeredAtIST)
+    ].join(','));
+  });
+
+  // Prepend UTF-8 Byte Order Mark (BOM) so Excel opens UTF-8 properly without broken characters
+  return '\uFEFF' + rows.join('\r\n');
 }
 
 module.exports = {
@@ -741,6 +1016,17 @@ module.exports = {
   getUserStats,
   checkRateLimit,
   getCompetitionConfig,
+  setCompetitionTimer,
+  formatIST,
+  getChallengeLocks,
+  isChallengeLocked,
+  setChallengeLock,
+  setAllChallengeLocks,
+  createAdminSession,
+  validateAdminSession,
+  deleteAdminSession,
+  getDetailedLeaderboardForExport,
+  generateLeaderboardCSV,
   clearAllParticipants,
   initCompetitionConfigIfNeeded
 };

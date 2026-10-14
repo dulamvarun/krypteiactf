@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <meta name="theme-color" content="#0a0e0c" />
+  <title>KRYPTEIA CTF — Organizer Command Center (Admin)</title>
+  
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2348bb78'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.52-3.13 8.75-7 9.88-3.87-1.13-7-5.36-7-9.88V6.3l7-3.12z'/></svg>" />
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Admin Stylesheet -->
+  <link rel="stylesheet" href="/css/admin.css?v=1.0" />
+</head>
+<body>
+
+  <!-- Admin Navigation Bar -->
+  <header class="admin-navbar" role="banner">
+    <a href="/admin" class="admin-brand">
+      <span class="brand-badge">ADMIN</span>
+      <div class="brand-title">KRYPTEIA <span>CTF</span> COMMAND</div>
+    </a>
+
+    <div class="admin-nav-right">
+      <!-- Live IST Clock -->
+      <div class="clock-pill" id="ist-clock-pill" title="Indian Standard Time (IST)">
+        <span>🕒</span>
+        <span id="live-ist-clock">--:--:-- IST</span>
+      </div>
+
+      <!-- Authenticated Admin Badge -->
+      <div class="admin-pill" id="admin-badge" style="display: none;">
+        <span>🛡️</span>
+        <span id="admin-id-label">Commander Pappu</span>
+      </div>
+
+      <!-- Public Portal Link -->
+      <a href="/" class="btn btn-outline btn-sm" target="_blank" title="Open Public Participant Portal">
+        🌐 Public Portal ↗
+      </a>
+
+      <!-- Logout Button -->
+      <button type="button" class="btn btn-danger btn-sm" id="admin-logout-btn" style="display: none;">
+        🚪 Logout
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="admin-container" role="main">
+
+    <!-- VIEW 1: ADMIN LOGIN VIEW (shown if not logged in) -->
+    <div id="login-view" class="login-view-wrapper">
+      <div class="admin-login-card">
+        <div class="login-header">
+          <span class="login-badge">RESTRICTED ACCESS</span>
+          <h1 class="login-title">Organizer Login</h1>
+          <p class="login-subtitle">Authenticate with administrative credentials to access competition controls.</p>
+        </div>
+
+        <div id="login-feedback" class="feedback-msg"></div>
+
+        <form id="admin-login-form">
+          <div class="form-group">
+            <label for="admin-id-input" class="form-label">Administrator ID</label>
+            <input 
+              type="text" 
+              id="admin-id-input" 
+              class="form-input mono" 
+              placeholder="Admin ID (e.g. pappu)" 
+              required 
+              autocomplete="username" 
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="admin-pass-input" class="form-label">Security Password</label>
+            <input 
+              type="password" 
+              id="admin-pass-input" 
+              class="form-input mono" 
+              placeholder="••••••••" 
+              required 
+              autocomplete="current-password" 
+            />
+          </div>
+
+          <button type="submit" class="btn btn-green" id="login-submit-btn" style="width: 100%; padding: 0.75rem; font-weight: 600;">
+            ⚡ Authenticate & Enter Portal
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- VIEW 2: DASHBOARD VIEW (shown when authenticated) -->
+    <div id="dashboard-view" class="dashboard-grid" style="display: none;">
+
+      <!-- Top Live Metrics Summary -->
+      <section class="metrics-row" aria-label="System Metrics">
+        <div class="admin-metric-card">
+          <div class="metric-icon">⚡</div>
+          <div class="metric-content">
+            <span class="metric-label">Arena Status</span>
+            <div id="metric-arena-status" style="margin-top: 4px;">
+              <span class="status-pill live"><span class="pulse-dot"></span> LIVE</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-metric-card">
+          <div class="metric-icon">🧩</div>
+          <div class="metric-content">
+            <span class="metric-label">Challenges</span>
+            <span class="metric-value" id="metric-challenges-ratio">0 / 0</span>
+          </div>
+        </div>
+
+        <div class="admin-metric-card">
+          <div class="metric-icon">👥</div>
+          <div class="metric-content">
+            <span class="metric-label">Registered Teams</span>
+            <span class="metric-value" id="metric-teams-count">0</span>
+          </div>
+        </div>
+
+        <div class="admin-metric-card">
+          <div class="metric-icon">🎯</div>
+          <div class="metric-content">
+            <span class="metric-label">Total Solves</span>
+            <span class="metric-value" id="metric-solves-count">0</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 1: EVENT TIMER & IST CONTROLLER -->
+      <section class="admin-card" aria-label="Competition Schedule & IST Timer">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span style="font-size: 1.4rem;">⏱️</span>
+            <div>
+              <h2 class="card-title">Competition Kickoff & IST Timer Controller</h2>
+              <p class="card-subtitle">Set Indian Standard Time (IST) schedule. While in standby, participant portal displays the countdown waiting room.</p>
+            </div>
+          </div>
+          <div id="current-status-badge-container">
+            <span class="status-pill live" id="timer-live-badge"><span class="pulse-dot"></span> ARENA LIVE</span>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <div class="timer-controller">
+            
+            <!-- Left Column: Current Status Overview -->
+            <div class="timer-info-box">
+              <div class="timer-current-status">
+                <span class="timer-field-label">Current Event State:</span>
+                <span id="current-state-text" class="mono" style="font-weight: 700; color: #fff;">LIVE</span>
+              </div>
+
+              <div class="timer-field-row">
+                <span class="timer-field-label">Scheduled Start Time (IST):</span>
+                <span class="timer-field-val" id="disp-start-ist">--</span>
+              </div>
+
+              <div class="timer-field-row">
+                <span class="timer-field-label">Participant Portal View:</span>
+                <span class="mono" id="disp-user-view" style="font-size: 0.88rem; color: var(--text-secondary);">
+                  Active Challenge Arena (Solves Open)
+                </span>
+              </div>
+
+              <div class="timer-field-row" style="margin-bottom: 0;">
+                <span class="timer-field-label">Countdown / Time Elapsed:</span>
+                <span class="timer-field-val" id="disp-timer-diff" style="color: var(--accent-amber);">--:--:--</span>
+              </div>
+            </div>
+
+            <!-- Right Column: Timer Configuration Form -->
+            <div>
+              <form id="timer-form">
+                <div class="form-group">
+                  <label for="start-time-input" class="form-label">
+                    Set Kickoff Date & Time (IST — Asia/Kolkata)
+                  </label>
+                  <input 
+                    type="datetime-local" 
+                    id="start-time-input" 
+                    class="form-input mono" 
+                    required 
+                  />
+                  <small style="color: var(--text-muted); font-size: 0.78rem; display: block; margin-top: 4px;">
+                    Enter the time in your local IST clock. When set in the future, the user portal blocks solves and displays the pre-launch countdown.
+                  </small>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Quick Kickoff Presets:</label>
+                  <div class="quick-presets-row">
+                    <button type="button" class="preset-chip" id="preset-now">
+                      ⚡ Start Immediately (Live Now)
+                    </button>
+                    <button type="button" class="preset-chip" id="preset-5m">
+                      ⏱️ +5 Mins
+                    </button>
+                    <button type="button" class="preset-chip" id="preset-15m">
+                      ⏱️ +15 Mins
+                    </button>
+                    <button type="button" class="preset-chip" id="preset-30m">
+                      ⏱️ +30 Mins
+                    </button>
+                    <button type="button" class="preset-chip" id="preset-1h">
+                      ⏱️ +1 Hour
+                    </button>
+                  </div>
+                </div>
+
+                <button type="submit" class="btn btn-green" id="btn-save-timer">
+                  💾 Update Competition Timer (IST)
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 2: DYNAMIC QUESTION LOCK & UNLOCK -->
+      <section class="admin-card" aria-label="Dynamic Challenge Locks">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span style="font-size: 1.4rem;">🔐</span>
+            <div>
+              <h2 class="card-title">Dynamic Question Locks</h2>
+              <p class="card-subtitle">Lock and unlock challenges in real-time. Locked challenges cannot be solved or accessed by participants.</p>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
+            <button type="button" class="btn btn-outline-green btn-sm" id="btn-unlock-all">
+              🔓 Unlock All Questions
+            </button>
+            <button type="button" class="btn btn-danger btn-sm" id="btn-lock-all">
+              🔒 Lock All Questions
+            </button>
+          </div>
+        </div>
+
+        <div class="card-body" style="padding: 0;">
+          <div class="table-responsive">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Category</th>
+                  <th>Challenge Title</th>
+                  <th>Difficulty</th>
+                  <th>Points</th>
+                  <th>Solves</th>
+                  <th>Current State</th>
+                  <th style="text-align: right;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="challenges-table-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 3: LEADERBOARD & SHEET DOWNLOAD -->
+      <section class="admin-card" aria-label="Authoritative Standings & Sheet Export">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span style="font-size: 1.4rem;">📊</span>
+            <div>
+              <h2 class="card-title">Leaderboard & Spreadsheet Export</h2>
+              <p class="card-subtitle">Live rankings prioritized by points and earliest solve time. Export official spreadsheet for records.</p>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
+            <input 
+              type="search" 
+              id="lb-admin-search" 
+              class="form-input mono" 
+              placeholder="Search team or email..." 
+              style="width: 220px; padding: 0.35rem 0.75rem; font-size: 0.82rem;" 
+            />
+            <button type="button" class="btn btn-outline btn-sm" id="btn-refresh-lb">
+              🔄 Refresh
+            </button>
+            <button type="button" class="btn btn-green btn-sm" id="btn-export-sheet">
+              📥 Download Sheet (Excel / CSV)
+            </button>
+          </div>
+        </div>
+
+        <div class="card-body" style="padding: 0;">
+          <div class="table-responsive">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Team / Username</th>
+                  <th>Email Address</th>
+                  <th>Solves</th>
+                  <th>Total Points</th>
+                  <th>Last Solve Time (IST)</th>
+                  <th>Registered At (IST)</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboard-table-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 4: ORGANIZER MAINTENANCE & DANGER ZONE -->
+      <section class="admin-card" style="border-color: rgba(229, 62, 62, 0.3);" aria-label="Danger Zone">
+        <div class="card-header" style="background: rgba(229, 62, 62, 0.05);">
+          <div class="card-header-left">
+            <span style="font-size: 1.4rem;">⚠️</span>
+            <div>
+              <h2 class="card-title" style="color: #fc8181;">Danger Zone & Maintenance</h2>
+              <p class="card-subtitle">Perform destructive system resets only between official CTF runs.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+          <div>
+            <strong>Clear All Participant Accounts & Solves</strong>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 2px;">
+              Deletes all registered teams, active sessions, flag submission logs, and solve records to begin fresh.
+            </p>
+          </div>
+          <button type="button" class="btn btn-danger" id="btn-reset-data">
+            🗑️ Clear Leaderboard & Reset Data
+          </button>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- Admin Toast Container -->
+  <div class="admin-toast-container" id="admin-toast-container"></div>
+
+  <!-- Admin Logic Script -->
+  <script src="/js/admin.js?v=1.0"></script>
+</body>
+</html>

@@ -136,46 +136,106 @@
         </div>
       </div>
 
-      <!-- Filters & Search Controls -->
-      <div class="filter-controls-row">
-        <div class="filters-stack">
-          <!-- Status Filter: All / Unsolved / Solved -->
-          <div class="status-filter-pills" id="status-filter-pills" role="tablist" aria-label="Status Filter">
-            <button type="button" class="status-pill active" data-status="all" id="status-filter-all">
-              <span>All Challenges</span>
-              <span class="status-count" id="count-all">0</span>
-            </button>
-            <button type="button" class="status-pill" data-status="unsolved" id="status-filter-unsolved">
-              <span>○ Unsolved</span>
-              <span class="status-count" id="count-unsolved">0</span>
-            </button>
-            <button type="button" class="status-pill" data-status="solved" id="status-filter-solved">
-              <span>✓ Solved</span>
-              <span class="status-count" id="count-solved">0</span>
-            </button>
-          </div>
+      <!-- Pre-Event Standby / Countdown Screen (Shown when event is not started yet) -->
+      <div class="pre-event-card" id="pre-event-card" style="display: none;">
+        <div class="pre-event-header">
+          <div class="pre-event-badge"><span class="pulse-dot amber"></span> ARENA STANDBY · IST SCHEDULED</div>
+          <h2 class="pre-event-title">Competition Has Not Started Yet</h2>
+          <p class="pre-event-subtitle">KRYPTEIA CTF arena is in pre-launch countdown. All challenge briefs, diagnostic environments, and flag submission consoles will unlock automatically in:</p>
+        </div>
 
-          <!-- Category Pills -->
-          <div class="category-pills" id="category-pills" role="tablist" aria-label="Challenge Categories">
-            <!-- Populated by app.js -->
+        <div class="pre-event-countdown-display" id="pre-event-countdown-display">
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-days">00</span>
+            <span class="countdown-tag">DAYS</span>
+          </div>
+          <div class="countdown-colon">:</div>
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-hours">00</span>
+            <span class="countdown-tag">HOURS</span>
+          </div>
+          <div class="countdown-colon">:</div>
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-minutes">00</span>
+            <span class="countdown-tag">MINUTES</span>
+          </div>
+          <div class="countdown-colon">:</div>
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-seconds">00</span>
+            <span class="countdown-tag">SECONDS</span>
           </div>
         </div>
 
-        <div class="search-box">
-          <span class="search-icon">🔍</span>
-          <input 
-            type="search" 
-            class="search-input" 
-            id="search-input" 
-            placeholder="Search challenges..." 
-            aria-label="Search challenges"
-          />
+        <div class="pre-event-info-grid">
+          <div class="pre-info-item">
+            <span class="pre-info-icon">🕒</span>
+            <div class="pre-info-text">
+              <span class="pre-info-label">Official Kickoff (IST)</span>
+              <strong class="pre-info-val" id="pre-start-time-ist">Calculating...</strong>
+            </div>
+          </div>
+          <div class="pre-info-item">
+            <span class="pre-info-icon">🛡️</span>
+            <div class="pre-info-text">
+              <span class="pre-info-label">Contestant Pre-Registration</span>
+              <span class="pre-info-val" id="pre-auth-notice">You can register your account and log in now while waiting.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pre-event-actions">
+          <button type="button" class="btn btn-green btn-md" id="pre-auth-btn">
+            <span>🔑 Sign In / Register Account</span>
+          </button>
+          <a href="#rules" class="btn btn-outline btn-md">
+            <span>📜 Read Competition Rules</span>
+          </a>
         </div>
       </div>
 
-      <!-- Challenge Cards Grid -->
-      <div class="challenges-grid" id="challenges-grid" role="region" aria-label="Challenges Grid">
-        <!-- Rendered by app.js -->
+      <!-- Active Challenges Area (Shown when event is live) -->
+      <div id="active-challenges-area">
+        <!-- Filters & Search Controls -->
+        <div class="filter-controls-row">
+          <div class="filters-stack">
+            <!-- Status Filter: All / Unsolved / Solved -->
+            <div class="status-filter-pills" id="status-filter-pills" role="tablist" aria-label="Status Filter">
+              <button type="button" class="status-pill active" data-status="all" id="status-filter-all">
+                <span>All Challenges</span>
+                <span class="status-count" id="count-all">0</span>
+              </button>
+              <button type="button" class="status-pill" data-status="unsolved" id="status-filter-unsolved">
+                <span>○ Unsolved</span>
+                <span class="status-count" id="count-unsolved">0</span>
+              </button>
+              <button type="button" class="status-pill" data-status="solved" id="status-filter-solved">
+                <span>✓ Solved</span>
+                <span class="status-count" id="count-solved">0</span>
+              </button>
+            </div>
+
+            <!-- Category Pills -->
+            <div class="category-pills" id="category-pills" role="tablist" aria-label="Challenge Categories">
+              <!-- Populated by app.js -->
+            </div>
+          </div>
+
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input 
+              type="search" 
+              class="search-input" 
+              id="search-input" 
+              placeholder="Search challenges..." 
+              aria-label="Search challenges"
+            />
+          </div>
+        </div>
+
+        <!-- Challenge Cards Grid -->
+        <div class="challenges-grid" id="challenges-grid" role="region" aria-label="Challenges Grid">
+          <!-- Rendered by app.js -->
+        </div>
       </div>
     </section>
 
@@ -283,6 +343,15 @@
       <div class="modal-body">
         <!-- Prominent Solved/Unsolved Status Banner -->
         <div class="modal-solve-banner" id="modal-solve-banner" style="display: none;"></div>
+
+        <!-- Prominent Locked Banner if challenge is locked by admin -->
+        <div class="modal-locked-banner" id="modal-locked-banner" style="display: none;">
+          <span class="locked-banner-icon">🔒</span>
+          <div class="locked-banner-text">
+            <strong>Challenge Locked by Administrator</strong>
+            <p>This question has been temporarily locked by CTF organizers. Flag submissions and challenge files are currently disabled.</p>
+          </div>
+        </div>
 
         <!-- Formatted Description -->
         <div class="modal-description" id="modal-description"></div>
@@ -457,6 +526,11 @@
         <a href="https://www.instagram.com/riftgostudios/" target="_blank" rel="noopener noreferrer" class="tech-support-badge" title="Riftgo Studios on Instagram" aria-label="Riftgo Studios on Instagram">
           <img src="/images/riftgo-studios.png" alt="Riftgo Studios" class="tech-support-logo" />
         </a>
+      </div>
+
+      <!-- Admin Portal Access Link -->
+      <div class="footer-admin-row">
+        <a href="/admin" class="footer-admin-link">🔒 Organizer Command Portal</a>
       </div>
     </div>
   </footer>

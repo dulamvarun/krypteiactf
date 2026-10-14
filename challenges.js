@@ -233,9 +233,9 @@ CHALLENGES.forEach(c => CHALLENGE_MAP.set(c.id, c));
 
 /**
  * Returns public challenge data stripped of all private flags.
- * Also attaches whether the user solved it.
+ * Also attaches whether the user solved it and if it is locked.
  */
-function getPublicChallenges(userSolves = new Set(), solveCounts = {}) {
+function getPublicChallenges(userSolves = new Set(), solveCounts = {}, challengeLocks = {}) {
   return CHALLENGES.map(c => ({
     id: c.id,
     title: c.title,
@@ -246,7 +246,8 @@ function getPublicChallenges(userSolves = new Set(), solveCounts = {}) {
     hints: c.hints,
     attachments: c.attachments,
     solveCount: solveCounts[c.id] || 0,
-    isSolved: userSolves.has(c.id)
+    isSolved: userSolves.has(c.id),
+    isLocked: Boolean(challengeLocks[c.id])
   }));
 }
 
