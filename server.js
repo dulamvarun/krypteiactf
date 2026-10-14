@@ -249,7 +249,7 @@ app.post('/api/submit-flag', (req, res) => {
   if (db.isChallengeLocked(challengeId)) {
     return res.status(403).json({
       success: false,
-      error: 'This challenge is currently locked by administrators. Submissions are temporarily closed.'
+      error: 'This question will be available to solve when unlocked.'
     });
   }
 

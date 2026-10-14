@@ -649,7 +649,7 @@
           <h3 class="card-title ${c.isSolved ? 'title-solved' : ''}">
             ${c.isSolved ? '<span class="title-check">✓</span> ' : ''}${isLocked ? '<span style="color:#fc8181; margin-right:4px;">🔒</span>' : ''}${escapeHtml(c.title)}
           </h3>
-          <p class="card-preview-text">${isLocked ? '<em style="color:var(--text-muted); font-size:0.83rem;">🔒 Question locked by administrators</em>' : escapeHtml(cleanDesc)}</p>
+          <p class="card-preview-text">${isLocked ? '<em style="color:var(--text-muted); font-size:0.83rem;">🔒 This question will be available to solve when unlocked</em>' : escapeHtml(cleanDesc)}</p>
         </div>
         <div class="card-bottom-row">
           <span class="difficulty-pill ${diffClass}">${escapeHtml(c.difficulty)}</span>
@@ -661,7 +661,7 @@
 
       card.addEventListener('click', () => {
         if (isLocked) {
-          showToast(`🔒 "${c.title}" is locked by administrators. It will unlock when the competition organizers make it active.`, 'error');
+          showToast('🔒 This question will be available to solve when unlocked.', 'info');
           return;
         }
         openChallengeModal(c.id);
@@ -677,7 +677,7 @@
 
     // Locked questions cannot be opened
     if (c.isLocked) {
-      showToast(`🔒 "${c.title}" is locked by administrators and cannot be opened.`, 'error');
+      showToast('🔒 This question will be available to solve when unlocked.', 'info');
       return;
     }
 
