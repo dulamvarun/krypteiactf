@@ -23,24 +23,25 @@ function ensureExcelFileExists() {
   if (!fs.existsSync(EXCEL_FILE_PATH)) {
     const wb = xlsx.utils.book_new();
     const defaultData = [
-      ['Team Name', 'Points'],
-      ['ByteBandits', 1450],
-      ['NullPointers', 1320],
-      ['CyberKnights', 1150],
-      ['0xBitShift', 980],
-      ['ShadowProtocol', 870],
-      ['KernelPanic', 750],
-      ['BinaryBeasts', 620],
-      ['PhishBusters', 500],
-      ['SYN_ACK_Attack', 420],
-      ['CipherSquad', 350],
-      ['DecryptionDuo', 280],
-      ['PacketPioneers', 200]
+      ['Rank', 'Team Name', 'Points'],
+      [1, 'Hash-Cracks', 1100],
+      [2, 'F Society', 950],
+      [3, 'Elite Minds', 900],
+      [4, 'Black Hat', 750],
+      [5, 'Karunya', 550],
+      [5, 'GriftiT', 550],
+      [7, 'Space', 500],
+      [7, 'Ctrl-Z', 500],
+      [7, 'Data Dynamics', 500],
+      [10, 'Vikings', 475],
+      [11, 'Mogers', 300],
+      [11, 'Data Dynamic', 300],
+      [13, 'Raiders', 0]
     ];
     const ws = xlsx.utils.aoa_to_sheet(defaultData);
     xlsx.utils.book_append_sheet(wb, ws, 'Leaderboard');
     xlsx.writeFile(wb, EXCEL_FILE_PATH);
-    console.log('[Excel Leaderboard] Created initial leaderboard.xlsx');
+    console.log('[Excel Leaderboard] Created initial leaderboard.xlsx with Krypteia teams');
   }
 }
 
@@ -57,6 +58,12 @@ function isPointsColumn(headerName) {
   if (!headerName || typeof headerName !== 'string') return false;
   const h = headerName.trim().toLowerCase().replace(/[\s_-]+/g, '');
   return ['points', 'score', 'pts', 'totalpoints', 'marks', 'point'].includes(h);
+}
+
+function isRankColumn(headerName) {
+  if (!headerName || typeof headerName !== 'string') return false;
+  const h = headerName.trim().toLowerCase().replace(/[\s_#-]+/g, '');
+  return ['rank', 'pos', 'position', 'rk', 'place', 'no'].includes(h);
 }
 
 /**
@@ -92,6 +99,7 @@ function readExcelLeaderboard() {
     const firstRow = rawRows[0];
     const keys = Object.keys(firstRow);
 
+    let rankKey = keys.find(k => isRankColumn(k));
     let teamKey = keys.find(k => isTeamColumn(k));
     let pointsKey = keys.find(k => isPointsColumn(k));
 
@@ -101,14 +109,14 @@ function readExcelLeaderboard() {
 
     const teamList = [];
 
-    for (const row of rawRows) {
+    rawRows.forEach((row, originalIndex) => {
       const rawName = row[teamKey];
       const rawPoints = row[pointsKey];
 
-      if (rawName === undefined || rawName === null) continue;
+      if (rawName === undefined || rawName === null) return;
       const teamName = String(rawName).trim();
       if (!teamName || teamName.toLowerCase() === 'team name' || teamName.toLowerCase() === 'team') {
-        continue;
+        return;
       }
 
       // Parse numerical points cleanly (strip commas, spaces, etc.)
@@ -120,23 +128,38 @@ function readExcelLeaderboard() {
         points = parseFloat(cleanPoints) || 0;
       }
 
+      // Explicit rank from sheet if available
+      let explicitRank = null;
+      if (rankKey && row[rankKey] !== undefined && row[rankKey] !== '') {
+        const parsed = parseInt(String(row[rankKey]).replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(parsed) && parsed > 0) explicitRank = parsed;
+      }
+
       teamList.push({
         teamName,
-        points: Math.round(points)
+        points: Math.round(points),
+        explicitRank,
+        originalIndex
       });
-    }
+    });
 
-    // Sort by points descending (highest to lowest); tie-break alphabetically by team name
+    // Sort by points descending (highest to lowest); maintain original sheet order for ties
     teamList.sort((a, b) => {
       if (b.points !== a.points) {
         return b.points - a.points;
       }
-      return a.teamName.localeCompare(b.teamName);
+      return a.originalIndex - b.originalIndex;
     });
 
-    // Assign ranks and top-3 highlights
+    // Standard competition ranking (1224 style) or explicit rank from sheet
+    let currentRank = 1;
     const rankedTeams = teamList.map((team, idx) => {
-      const rank = idx + 1;
+      if (team.explicitRank) {
+        currentRank = team.explicitRank;
+      } else if (idx > 0 && team.points < teamList[idx - 1].points) {
+        currentRank = idx + 1;
+      }
+      const rank = team.explicitRank || currentRank;
       return {
         rank,
         teamName: team.teamName,
