@@ -568,10 +568,10 @@
     };
   }
 
-  function handleLiveLockUpdate(challengeId, isLocked) {
+  async function handleLiveLockUpdate(challengeId, isLocked) {
     const ch = state.challenges.find(c => c.id === challengeId);
     if (ch) {
-      ch.isLocked = isLocked;
+      ch.isLocked = Boolean(isLocked);
       renderChallenges();
     }
 
@@ -580,21 +580,19 @@
         closeChallengeModal();
         showToast('🔒 This question was just locked by the administrator.', 'info');
       } else {
+        await loadChallenges();
         openChallengeModal(challengeId);
         showToast('🔓 This question is now unlocked and available!', 'success');
+        return;
       }
     }
+
+    // Fully reload challenges from API so unstripped description/hints/attachments are synced
+    await loadChallenges();
   }
 
-  function handleLiveLockAll(isLocked, locks) {
-    state.challenges.forEach(c => {
-      if (locks && locks[c.id] !== undefined) {
-        c.isLocked = locks[c.id];
-      } else {
-        c.isLocked = isLocked;
-      }
-    });
-    renderChallenges();
+  async function handleLiveLockAll(isLocked, locks) {
+    await loadChallenges();
 
     if (state.currentModalChallengeId) {
       const modalCh = state.challenges.find(c => c.id === state.currentModalChallengeId);

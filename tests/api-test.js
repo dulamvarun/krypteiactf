@@ -42,6 +42,10 @@ async function runTests() {
   console.log(`Test server running on ${baseUrl}`);
 
   try {
+    // Reset test state to clean baseline
+    db.clearAllParticipants();
+    db.setAllChallengeLocks(db.getAllChallengeIds(), false);
+
     // Test 1: Config endpoint
     console.log('[1] Testing /api/config');
     const configRes = await request('/api/config');
@@ -314,6 +318,98 @@ async function runTests() {
     assert.ok(receivedEvents.includes('connected'), 'SSE did not send connected event');
     assert.ok(receivedEvents.includes('challenge_lock_updated'), 'SSE did not broadcast challenge_lock_updated event');
     console.log('  ✓ Server-Sent Events live stream broadcasts admin modifications in real-time');
+
+    // Test 17: Admin Lock / Unlock synchronization & solve blocking
+    console.log('[17] Testing Admin challenge lock synchronization & solve blocking');
+    // Lock crypto-01
+    const lockRes = await request('/api/admin/challenge-lock', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: { challengeId: 'crypto-01', isLocked: true }
+    });
+    assert.strictEqual(lockRes.status, 200);
+    assert.strictEqual(lockRes.json.isLocked, true);
+
+    // Verify /api/challenges returns it locked with stripped description
+    const challengesAfterLock = await request('/api/challenges');
+    const lockedCh = challengesAfterLock.json.challenges.find(c => c.id === 'crypto-01');
+    assert.ok(lockedCh, 'crypto-01 not found');
+    assert.strictEqual(lockedCh.isLocked, true, 'crypto-01 should be locked in public API');
+    assert.strictEqual(lockedCh.description, '', 'Locked challenge description must be stripped');
+
+    // Attempt to submit flag to locked challenge -> 403 Forbidden
+    const blockedSubmit = await request('/api/submit-flag', {
+      method: 'POST',
+      headers: { Cookie: `krypteia_session=${authToken}` },
+      body: { challengeId: 'crypto-01', flag: 'KRYPTEIA{c4354r_sh1ft_c1ph3r_unl0ck3d}' }
+    });
+    assert.strictEqual(blockedSubmit.status, 403, 'Submitting to locked challenge must return 403');
+    assert.ok(blockedSubmit.json.error.includes('when unlocked'), 'Expected unlock message');
+
+    // Unlock crypto-01
+    const unlockRes = await request('/api/admin/challenge-lock', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: { challengeId: 'crypto-01', isLocked: false }
+    });
+    assert.strictEqual(unlockRes.status, 200);
+    assert.strictEqual(unlockRes.json.isLocked, false);
+
+    // Verify /api/challenges returns it unlocked with full description restored
+    const challengesAfterUnlock = await request('/api/challenges');
+    const unlockedCh = challengesAfterUnlock.json.challenges.find(c => c.id === 'crypto-01');
+    assert.strictEqual(unlockedCh.isLocked, false, 'crypto-01 should be unlocked in public API');
+    assert.ok(unlockedCh.description.length > 10, 'Unlocked challenge description must be present');
+    console.log('  ✓ Admin question lock options sync and enforce solve blocks flawlessly');
+
+    // Test 18: Leaderboard tie-break based on first submission when marks are equal
+    console.log('[18] Testing Leaderboard tie-break based on first submission for identical marks');
+    // Clear participants to have a clean leaderboard test
+    db.clearAllParticipants();
+
+    // Register User One
+    const u1Res = await request('/api/auth/register', {
+      method: 'POST',
+      body: { username: 'FirstSubmitter', email: 'first@spec.ac.in', password: 'Password123!' }
+    });
+    const u1Token = u1Res.json.token;
+
+    // Register User Two
+    const u2Res = await request('/api/auth/register', {
+      method: 'POST',
+      body: { username: 'SecondSubmitter', email: 'second@spec.ac.in', password: 'Password123!' }
+    });
+    const u2Token = u2Res.json.token;
+
+    // User One solves gen-01 first
+    const u1Solve = await request('/api/submit-flag', {
+      method: 'POST',
+      headers: { Cookie: `krypteia_session=${u1Token}` },
+      body: { challengeId: 'gen-01', flag: 'KRYPTEIA{w3lc0m3_t0_krypt31a_2026}' }
+    });
+    assert.strictEqual(u1Solve.status, 200);
+    assert.strictEqual(u1Solve.json.success, true);
+
+    // Wait 1.1s for rate limit window, then User Two solves gen-01
+    await new Promise(r => setTimeout(r, 1100));
+    const u2Solve = await request('/api/submit-flag', {
+      method: 'POST',
+      headers: { Cookie: `krypteia_session=${u2Token}` },
+      body: { challengeId: 'gen-01', flag: 'KRYPTEIA{w3lc0m3_t0_krypt31a_2026}' }
+    });
+    assert.strictEqual(u2Solve.status, 200);
+    assert.strictEqual(u2Solve.json.success, true);
+
+    // Query leaderboard: both have 50 points, but User One submitted earlier!
+    const lbTieRes = await request('/api/leaderboard');
+    assert.strictEqual(lbTieRes.status, 200);
+    const standings = lbTieRes.json.leaderboard;
+    assert.strictEqual(standings.length, 2);
+    assert.strictEqual(standings[0].username, 'FirstSubmitter', 'First submitter must be Rank #1 on equal marks');
+    assert.strictEqual(standings[0].rank, 1);
+    assert.strictEqual(standings[1].username, 'SecondSubmitter', 'Second submitter must be Rank #2 on equal marks');
+    assert.strictEqual(standings[1].rank, 2);
+    console.log('  ✓ Leaderboard ranking accurately gives top position to first submission when marks are equal');
 
     console.log('\n>>> ALL BACKEND API TESTS PASSED SUCCESSFULLY! <<<');
   } finally {

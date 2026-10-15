@@ -532,17 +532,37 @@ function getLeaderboard(currentUserId = null) {
         u.id as user_id,
         u.username,
         u.created_at,
-        COALESCE(SUM(s.points), 0) as total_points,
-        COUNT(s.id) as solved_count,
-        MAX(s.solved_at) as last_solve_time
+        COALESCE(s_agg.total_points, 0) as total_points,
+        COALESCE(s_agg.solved_count, 0) as solved_count,
+        s_agg.first_solve_time,
+        s_agg.last_solve_time,
+        COALESCE(sub_agg.first_submission_time, s_agg.first_solve_time) as first_submission_time
       FROM users u
-      LEFT JOIN solves s ON u.id = s.user_id
+      LEFT JOIN (
+        SELECT 
+          user_id,
+          SUM(points) as total_points,
+          COUNT(id) as solved_count,
+          MIN(solved_at) as first_solve_time,
+          MAX(solved_at) as last_solve_time
+        FROM solves
+        GROUP BY user_id
+      ) s_agg ON u.id = s_agg.user_id
+      LEFT JOIN (
+        SELECT 
+          user_id,
+          MIN(submitted_at) as first_submission_time
+        FROM submissions
+        GROUP BY user_id
+      ) sub_agg ON u.id = sub_agg.user_id
       GROUP BY u.id, u.username, u.created_at
-      ORDER BY total_points DESC,
-               CASE WHEN last_solve_time IS NULL THEN 1 ELSE 0 END ASC,
-               last_solve_time ASC,
-               u.created_at ASC,
-               u.id ASC
+      ORDER BY 
+        total_points DESC,
+        CASE WHEN COALESCE(s_agg.total_points, 0) > 0 THEN 0 ELSE 1 END ASC,
+        CASE WHEN COALESCE(s_agg.total_points, 0) > 0 THEN COALESCE(sub_agg.first_submission_time, s_agg.first_solve_time) END ASC,
+        CASE WHEN COALESCE(s_agg.total_points, 0) > 0 THEN s_agg.last_solve_time END ASC,
+        u.created_at ASC,
+        u.id ASC
     `).all();
 
     return rows.map((row, idx) => ({
@@ -551,25 +571,38 @@ function getLeaderboard(currentUserId = null) {
       username: row.username,
       totalPoints: row.total_points,
       solvedCount: row.solved_count,
+      firstSolveTime: row.first_solve_time,
       lastSolveTime: row.last_solve_time,
+      firstSubmissionTime: row.first_submission_time,
       isCurrentParticipant: currentUserId ? row.user_id === currentUserId : false
     }));
   } else {
-    // Group solves by user
+    // Group solves and submissions by user
     const userScores = memoryStore.users.map(u => {
-      const userSolves = memoryStore.solves.filter(s => s.user_id === u.id);
+      const userSolves = (memoryStore.solves || []).filter(s => s.user_id === u.id);
+      const userSubs = (memoryStore.submissions || []).filter(sub => sub.user_id === u.id);
       const totalPoints = userSolves.reduce((sum, s) => sum + s.points, 0);
+      let firstSolveTime = null;
       let lastSolveTime = null;
       if (userSolves.length > 0) {
-        lastSolveTime = userSolves.reduce((max, s) => (s.solved_at > max ? s.solved_at : max), userSolves[0].solved_at);
+        firstSolveTime = userSolves.reduce((min, s) => (!min || s.solved_at < min ? s.solved_at : min), userSolves[0].solved_at);
+        lastSolveTime = userSolves.reduce((max, s) => (!max || s.solved_at > max ? s.solved_at : max), userSolves[0].solved_at);
       }
+      let firstSubTime = null;
+      if (userSubs.length > 0) {
+        firstSubTime = userSubs.reduce((min, sub) => (!min || sub.submitted_at < min ? sub.submitted_at : min), userSubs[0].submitted_at);
+      }
+      const firstSubmissionTime = firstSubTime || firstSolveTime;
+
       return {
         user_id: u.id,
         username: u.username,
         created_at: u.created_at,
         total_points: totalPoints,
         solved_count: userSolves.length,
-        last_solve_time: lastSolveTime
+        first_solve_time: firstSolveTime,
+        last_solve_time: lastSolveTime,
+        first_submission_time: firstSubmissionTime
       };
     });
 
@@ -578,12 +611,21 @@ function getLeaderboard(currentUserId = null) {
       if (b.total_points !== a.total_points) {
         return b.total_points - a.total_points;
       }
-      // 2. Earliest last solve time has priority
-      if (a.last_solve_time && !b.last_solve_time) return -1;
-      if (!a.last_solve_time && b.last_solve_time) return 1;
-      if (a.last_solve_time && b.last_solve_time) {
-        if (a.last_solve_time < b.last_solve_time) return -1;
-        if (a.last_solve_time > b.last_solve_time) return 1;
+      // 2. If both have points > 0: Earliest first submission has top priority
+      if (a.total_points > 0 && b.total_points > 0) {
+        if (a.first_submission_time && b.first_submission_time) {
+          if (a.first_submission_time < b.first_submission_time) return -1;
+          if (a.first_submission_time > b.first_submission_time) return 1;
+        } else if (a.first_submission_time) {
+          return -1;
+        } else if (b.first_submission_time) {
+          return 1;
+        }
+        // If first submission time is tied, check last solve time
+        if (a.last_solve_time && b.last_solve_time) {
+          if (a.last_solve_time < b.last_solve_time) return -1;
+          if (a.last_solve_time > b.last_solve_time) return 1;
+        }
       }
       // 3. For 0-solve users: earlier registration wins
       if (a.created_at && b.created_at && a.created_at !== b.created_at) {
@@ -598,7 +640,9 @@ function getLeaderboard(currentUserId = null) {
       username: row.username,
       totalPoints: row.total_points,
       solvedCount: row.solved_count,
+      firstSolveTime: row.first_solve_time,
       lastSolveTime: row.last_solve_time,
+      firstSubmissionTime: row.first_submission_time,
       isCurrentParticipant: currentUserId ? row.user_id === currentUserId : false
     }));
   }
@@ -805,7 +849,14 @@ seedChallengesIfNeeded();
 // Challenge Management & Cryptographic Flag Operations
 // -------------------------------------------------------------
 
-function getAllPublicChallenges(userSolves = new Set(), solveCounts = {}, challengeLocks = {}) {
+function getAllPublicChallenges(userSolves = new Set(), solveCounts = null, challengeLocks = null) {
+  if (!solveCounts) {
+    solveCounts = getChallengeSolveCounts();
+  }
+  if (!challengeLocks) {
+    challengeLocks = getChallengeLocks();
+  }
+
   let rows = [];
   if (useSqlite) {
     rows = sqliteDb.prepare(`
@@ -818,7 +869,12 @@ function getAllPublicChallenges(userSolves = new Set(), solveCounts = {}, challe
   }
 
   return rows.map(c => {
-    const isLocked = Boolean((challengeLocks && challengeLocks[c.id]) || c.is_locked);
+    let isLocked = false;
+    if (challengeLocks && challengeLocks[c.id] !== undefined) {
+      isLocked = Boolean(challengeLocks[c.id]);
+    } else {
+      isLocked = Boolean(c.is_locked);
+    }
     let hints = [];
     let attachments = [];
     try {
@@ -869,7 +925,12 @@ function getAdminChallenges() {
       attachments = typeof c.attachments_json === 'string' ? JSON.parse(c.attachments_json || '[]') : (c.attachments || []);
     } catch (_) { attachments = []; }
 
-    const isLocked = Boolean(locks[c.id] || c.is_locked);
+    let isLocked = false;
+    if (locks && locks[c.id] !== undefined) {
+      isLocked = Boolean(locks[c.id]);
+    } else {
+      isLocked = Boolean(c.is_locked);
+    }
     const decrypted = decryptFlag(c.flag_encrypted);
 
     return {
@@ -1247,11 +1308,18 @@ function setCompetitionTimer(startTimeIso, endTimeIso = null, status = null) {
 function getChallengeLocks() {
   const map = {};
   if (useSqlite) {
+    const chRows = sqliteDb.prepare('SELECT id, is_locked FROM challenges').all();
+    chRows.forEach(r => {
+      map[r.id] = Boolean(r.is_locked);
+    });
     const rows = sqliteDb.prepare('SELECT challenge_id, is_locked FROM challenge_locks').all();
     rows.forEach(r => {
       map[r.challenge_id] = Boolean(r.is_locked);
     });
   } else {
+    (memoryStore.challenges || []).forEach(c => {
+      map[c.id] = Boolean(c.is_locked);
+    });
     Object.keys(memoryStore.challengeLocks || {}).forEach(k => {
       map[k] = Boolean(memoryStore.challengeLocks[k]);
     });
@@ -1263,9 +1331,17 @@ function isChallengeLocked(challengeId) {
   if (!challengeId) return false;
   if (useSqlite) {
     const row = sqliteDb.prepare('SELECT is_locked FROM challenge_locks WHERE challenge_id = ?').get(challengeId);
-    return row ? Boolean(row.is_locked) : false;
+    if (row !== undefined) {
+      return Boolean(row.is_locked);
+    }
+    const ch = sqliteDb.prepare('SELECT is_locked FROM challenges WHERE id = ?').get(challengeId);
+    return ch ? Boolean(ch.is_locked) : false;
   } else {
-    return Boolean((memoryStore.challengeLocks || {})[challengeId]);
+    if (memoryStore.challengeLocks && memoryStore.challengeLocks[challengeId] !== undefined) {
+      return Boolean(memoryStore.challengeLocks[challengeId]);
+    }
+    const ch = (memoryStore.challenges || []).find(c => c.id === challengeId);
+    return ch ? Boolean(ch.is_locked) : false;
   }
 }
 
@@ -1273,14 +1349,24 @@ function setChallengeLock(challengeId, isLocked) {
   const val = isLocked ? 1 : 0;
   const now = new Date().toISOString();
   if (useSqlite) {
-    sqliteDb.prepare(`
-      INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
-    `).run(challengeId, val, now);
+    sqliteDb.transaction(() => {
+      sqliteDb.prepare(`
+        INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
+      `).run(challengeId, val, now);
+      sqliteDb.prepare(`
+        UPDATE challenges SET is_locked = ?, updated_at = ? WHERE id = ?
+      `).run(val, now, challengeId);
+    })();
   } else {
     if (!memoryStore.challengeLocks) memoryStore.challengeLocks = {};
     memoryStore.challengeLocks[challengeId] = Boolean(isLocked);
+    const item = (memoryStore.challenges || []).find(c => c.id === challengeId);
+    if (item) {
+      item.is_locked = val;
+      item.updated_at = now;
+    }
   }
   return { challengeId, isLocked: Boolean(isLocked) };
 }
@@ -1290,19 +1376,28 @@ function setAllChallengeLocks(challengeIds, isLocked) {
   const now = new Date().toISOString();
   if (useSqlite) {
     sqliteDb.transaction(() => {
-      const stmt = sqliteDb.prepare(`
+      const lockStmt = sqliteDb.prepare(`
         INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
         VALUES (?, ?, ?)
         ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
       `);
+      const chStmt = sqliteDb.prepare(`
+        UPDATE challenges SET is_locked = ?, updated_at = ? WHERE id = ?
+      `);
       challengeIds.forEach(id => {
-        stmt.run(id, val, now);
+        lockStmt.run(id, val, now);
+        chStmt.run(val, now, id);
       });
     })();
   } else {
     if (!memoryStore.challengeLocks) memoryStore.challengeLocks = {};
     challengeIds.forEach(id => {
       memoryStore.challengeLocks[id] = Boolean(isLocked);
+      const item = (memoryStore.challenges || []).find(c => c.id === id);
+      if (item) {
+        item.is_locked = val;
+        item.updated_at = now;
+      }
     });
   }
   return getChallengeLocks();
@@ -1378,6 +1473,7 @@ function getDetailedLeaderboardForExport() {
         totalPoints: entry.totalPoints,
         solvedCount: entry.solvedCount,
         solvedChallenges: solvedList || 'None',
+        firstSubmissionTimeIST: entry.firstSubmissionTime ? formatIST(entry.firstSubmissionTime) : 'N/A',
         lastSolveTimeIST: entry.lastSolveTime ? formatIST(entry.lastSolveTime) : 'N/A',
         registeredAtIST: user.created_at ? formatIST(user.created_at) : 'N/A'
       };
@@ -1394,6 +1490,7 @@ function getDetailedLeaderboardForExport() {
         totalPoints: entry.totalPoints,
         solvedCount: entry.solvedCount,
         solvedChallenges: solvedList || 'None',
+        firstSubmissionTimeIST: entry.firstSubmissionTime ? formatIST(entry.firstSubmissionTime) : 'N/A',
         lastSolveTimeIST: entry.lastSolveTime ? formatIST(entry.lastSolveTime) : 'N/A',
         registeredAtIST: user.created_at ? formatIST(user.created_at) : 'N/A'
       };
@@ -1410,6 +1507,7 @@ function generateLeaderboardCSV() {
     'Total Points',
     'Challenges Solved Count',
     'Solved Challenge IDs',
+    'First Submission Time (IST)',
     'Last Solve Time (IST)',
     'Registration Time (IST)'
   ];
@@ -1430,6 +1528,7 @@ function generateLeaderboardCSV() {
       item.totalPoints,
       item.solvedCount,
       escapeCSV(item.solvedChallenges),
+      escapeCSV(item.firstSubmissionTimeIST),
       escapeCSV(item.lastSolveTimeIST),
       escapeCSV(item.registeredAtIST)
     ].join(','));

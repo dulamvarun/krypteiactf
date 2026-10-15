@@ -844,6 +844,11 @@
   }
 
   async function handleToggleLock(challengeId, newLockState) {
+    const ch = state.challenges.find(c => c.id === challengeId);
+    if (ch) {
+      ch.isLocked = Boolean(newLockState);
+      renderChallengesTable();
+    }
     try {
       const res = await adminFetch('/api/admin/challenge-lock', {
         method: 'POST',
@@ -856,10 +861,15 @@
       await fetchAdminData();
     } catch (err) {
       showToast(err.message || 'Failed to toggle challenge lock', 'error');
+      await fetchAdminData();
     }
   }
 
   async function handleBulkLock(isLocked) {
+    state.challenges.forEach(c => {
+      c.isLocked = Boolean(isLocked);
+    });
+    renderChallengesTable();
     try {
       const res = await adminFetch('/api/admin/challenge-lock-all', {
         method: 'POST',
@@ -869,6 +879,7 @@
       await fetchAdminData();
     } catch (err) {
       showToast(err.message || 'Failed to bulk lock challenges', 'error');
+      await fetchAdminData();
     }
   }
 
