@@ -35,22 +35,53 @@ app.use('/attachments', express.static(path.join(__dirname, 'public', 'attachmen
   maxAge: '2h'
 }));
 
-// Custom Auth Middleware: checks cookie or Bearer token
+// Custom Auth Middleware: checks Authorization header, custom headers, cookies, and body tokens
 function authMiddleware(req, res, next) {
-  let token = req.cookies['krypteia_session'];
+  const candidates = [];
 
-  if (!token && req.headers.authorization) {
-    const parts = req.headers.authorization.split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      token = parts[1];
+  // 1. Authorization header: "Bearer <token>"
+  if (req.headers && req.headers.authorization) {
+    const authHeader = String(req.headers.authorization).trim();
+    const match = authHeader.match(/^Bearer\s+(\S+)$/i);
+    if (match && match[1]) {
+      candidates.push(match[1]);
     }
   }
 
-  if (token) {
-    const user = db.getUserBySession(token);
+  // 2. Custom header tokens
+  if (req.headers && req.headers['x-session-token']) {
+    candidates.push(String(req.headers['x-session-token']).trim());
+  }
+  if (req.headers && req.headers['x-auth-token']) {
+    candidates.push(String(req.headers['x-auth-token']).trim());
+  }
+
+  // 3. Cookie token
+  if (req.cookies && req.cookies['krypteia_session']) {
+    candidates.push(String(req.cookies['krypteia_session']).trim());
+  }
+
+  // 4. Request body token fallback (especially for JSON POST requests)
+  if (req.body && typeof req.body === 'object') {
+    if (req.body.token) candidates.push(String(req.body.token).trim());
+    if (req.body.sessionToken) candidates.push(String(req.body.sessionToken).trim());
+  }
+
+  // 5. Query token fallback
+  if (req.query && req.query.token) {
+    candidates.push(String(req.query.token).trim());
+  }
+
+  // Try candidate tokens until a valid user is resolved
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const cleanToken = raw.replace(/^["']|["']$/g, '').trim();
+    if (!cleanToken) continue;
+    const user = db.getUserBySession(cleanToken);
     if (user) {
       req.user = user;
-      req.sessionToken = token;
+      req.sessionToken = cleanToken;
+      break;
     }
   }
   next();
@@ -171,12 +202,14 @@ app.post('/api/auth/register', (req, res) => {
     const user = db.createUser(username, email, password);
     const token = db.createSession(user.id);
 
-    // Set secure HTTP-only cookie
+    // Set secure HTTP-only cookie with explicit path: '/' and 30-day duration
     res.cookie('krypteia_session', token, {
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
+    res.setHeader('X-Session-Token', token);
 
     const stats = db.getUserStats(user.id);
 
@@ -208,8 +241,10 @@ app.post('/api/auth/login', (req, res) => {
     res.cookie('krypteia_session', token, {
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
+    res.setHeader('X-Session-Token', token);
 
     const stats = db.getUserStats(user.id);
 
@@ -227,7 +262,7 @@ app.post('/api/auth/logout', (req, res) => {
   if (req.sessionToken) {
     db.deleteSession(req.sessionToken);
   }
-  res.clearCookie('krypteia_session');
+  res.clearCookie('krypteia_session', { path: '/' });
   res.json({ message: 'Logged out successfully' });
 });
 
@@ -236,8 +271,19 @@ app.get('/api/auth/me', (req, res) => {
     return res.json({ user: null });
   }
 
+  // Refresh cookie to keep session alive and synchronized with client
+  if (req.sessionToken) {
+    res.cookie('krypteia_session', req.sessionToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+    res.setHeader('X-Session-Token', req.sessionToken);
+  }
+
   const stats = db.getUserStats(req.user.id);
-  res.json({ user: stats });
+  res.json({ user: stats, token: req.sessionToken });
 });
 
 // --- Challenges API ---
@@ -257,12 +303,36 @@ app.get('/api/challenges', (req, res) => {
   });
 });
 
-// --- Flag Submission and Scoring ---
 app.post('/api/submit-flag', (req, res) => {
+  // Direct safety fallback check if req.user wasn't resolved by middleware
+  if (!req.user) {
+    const fallbackToken = (req.body && (req.body.token || req.body.sessionToken)) ||
+                          (req.headers && (req.headers['x-session-token'] || req.headers['x-auth-token'])) ||
+                          (req.cookies && req.cookies['krypteia_session']);
+    if (fallbackToken) {
+      const clean = String(fallbackToken).replace(/^["']|["']$/g, '').trim();
+      const user = db.getUserBySession(clean);
+      if (user) {
+        req.user = user;
+        req.sessionToken = clean;
+      }
+    }
+  }
+
   if (!req.user) {
     return res.status(401).json({
       success: false,
       error: 'Authentication required. Please log in to submit flags.'
+    });
+  }
+
+  // Refresh cookie on active flag submission
+  if (req.sessionToken) {
+    res.cookie('krypteia_session', req.sessionToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60 * 1000
     });
   }
 

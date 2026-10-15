@@ -1123,7 +1123,13 @@
         showFeedback(res.message, 'info');
       }
     } catch (err) {
-      showFeedback(err.message || 'Incorrect flag. Try again!', 'error');
+      const msg = err.message || '';
+      if (msg.includes('Authentication') || msg.includes('log in') || msg.includes('401')) {
+        showFeedback('Session expired or authentication needed. Please log in to submit flags.', 'error');
+        openAuthModal('login');
+      } else {
+        showFeedback(msg || 'Incorrect flag. Try again!', 'error');
+      }
     } finally {
       const currentCh = state.challenges.find(c => c.id === challengeId);
       if (!currentCh || !currentCh.isSolved) {

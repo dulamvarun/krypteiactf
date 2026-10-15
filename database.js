@@ -366,10 +366,40 @@ function authenticateUser(identifier, password) {
   }
 }
 
+const SESSION_SECRET = process.env.SESSION_SECRET || 'krypteia_ctf_session_hmac_secret_2026';
+
+function signSessionToken(userId, nowMs) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const payload = `${userId}.${nowMs}.${nonce}`;
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex').substring(0, 32);
+  return `kctf_${payload}.${sig}`;
+}
+
+function verifySignedSessionToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  if (!token.startsWith('kctf_')) return null;
+  const parts = token.substring(5).split('.');
+  if (parts.length !== 4) return null;
+  const [userIdStr, nowMsStr, nonce, sig] = parts;
+  const userId = parseInt(userIdStr, 10);
+  const nowMs = parseInt(nowMsStr, 10);
+  if (isNaN(userId) || isNaN(nowMs)) return null;
+
+  // Max age: 30 days
+  if (Date.now() - nowMs > 30 * 24 * 60 * 60 * 1000) return null;
+
+  const payload = `${userId}.${nowMs}.${nonce}`;
+  const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex').substring(0, 32);
+  if (sig !== expectedSig) {
+    return null;
+  }
+  return userId;
+}
+
 function createSession(userId) {
-  const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  const token = signSessionToken(userId, now.getTime());
+  const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
   if (useSqlite) {
     sqliteDb.prepare(`
@@ -389,47 +419,98 @@ function createSession(userId) {
 }
 
 function getUserBySession(token) {
-  if (!token) return null;
+  if (!token || typeof token !== 'string') return null;
+  const cleanToken = token.trim().replace(/^["']|["']$/g, '');
+  if (!cleanToken) return null;
+
   const now = new Date().toISOString();
 
   if (useSqlite) {
+    // 1. Direct active session lookup
     const session = sqliteDb.prepare(`
       SELECT s.user_id, u.id, u.username, u.email, u.created_at
       FROM sessions s
       JOIN users u ON s.user_id = u.id
       WHERE s.token = ? AND s.expires_at > ?
-    `).get(token, now);
+    `).get(cleanToken, now);
 
-    if (!session) return null;
+    if (session) {
+      return {
+        id: session.id,
+        username: session.username,
+        email: session.email,
+        created_at: session.created_at
+      };
+    }
 
-    return {
-      id: session.id,
-      username: session.username,
-      email: session.email,
-      created_at: session.created_at
-    };
+    // 2. Cryptographic signature verification fallback
+    const verifiedUserId = verifySignedSessionToken(cleanToken);
+    if (verifiedUserId) {
+      const user = sqliteDb.prepare('SELECT id, username, email, created_at FROM users WHERE id = ?').get(verifiedUserId);
+      if (user) {
+        try {
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          sqliteDb.prepare(`
+            INSERT OR REPLACE INTO sessions (token, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+          `).run(cleanToken, user.id, new Date().toISOString(), expiresAt);
+        } catch (_) {}
+
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          created_at: user.created_at
+        };
+      }
+    }
+
+    return null;
   } else {
-    const session = memoryStore.sessions.find(s => s.token === token && s.expires_at > now);
-    if (!session) return null;
+    const session = memoryStore.sessions.find(s => s.token === cleanToken && s.expires_at > now);
+    if (session) {
+      const user = memoryStore.users.find(u => u.id === session.user_id);
+      if (user) {
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          created_at: user.created_at
+        };
+      }
+    }
 
-    const user = memoryStore.users.find(u => u.id === session.user_id);
-    if (!user) return null;
+    const verifiedUserId = verifySignedSessionToken(cleanToken);
+    if (verifiedUserId) {
+      const user = memoryStore.users.find(u => u.id === verifiedUserId);
+      if (user) {
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        memoryStore.sessions.push({
+          token: cleanToken,
+          user_id: user.id,
+          created_at: new Date().toISOString(),
+          expires_at: expiresAt
+        });
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          created_at: user.created_at
+        };
+      }
+    }
 
-    return {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      created_at: user.created_at
-    };
+    return null;
   }
 }
 
 function deleteSession(token) {
-  if (!token) return;
+  if (!token || typeof token !== 'string') return;
+  const cleanToken = token.trim().replace(/^["']|["']$/g, '');
   if (useSqlite) {
-    sqliteDb.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    sqliteDb.prepare('DELETE FROM sessions WHERE token = ?').run(cleanToken);
   } else {
-    const idx = memoryStore.sessions.findIndex(s => s.token === token);
+    const idx = memoryStore.sessions.findIndex(s => s.token === cleanToken);
     if (idx !== -1) memoryStore.sessions.splice(idx, 1);
   }
 }

@@ -1,23 +1,37 @@
 // API Client for Krypteia CTF
+let _inMemoryToken = '';
+
 const API = {
-  // Store bearer token in memory / localStorage fallback
+  // Store bearer token in memory / localStorage fallback safely
   getToken() {
-    return localStorage.getItem('krypteia_token') || '';
+    try {
+      return localStorage.getItem('krypteia_token') || _inMemoryToken || '';
+    } catch (_) {
+      return _inMemoryToken || '';
+    }
   },
   
   setToken(token) {
-    if (token) {
-      localStorage.setItem('krypteia_token', token);
-    } else {
-      localStorage.removeItem('krypteia_token');
-    }
+    _inMemoryToken = token || '';
+    try {
+      if (token) {
+        localStorage.setItem('krypteia_token', token);
+      } else {
+        localStorage.removeItem('krypteia_token');
+      }
+    } catch (_) {}
   },
 
   async request(path, options = {}) {
     const headers = options.headers || {};
     const token = this.getToken();
-    if (token && !headers['Authorization']) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (token) {
+      if (!headers['Authorization']) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (!headers['X-Session-Token']) {
+        headers['X-Session-Token'] = token;
+      }
     }
 
     if (options.body && typeof options.body === 'object') {
@@ -30,8 +44,14 @@ const API = {
         method: options.method || 'GET',
         headers,
         body: options.body,
-        credentials: 'same-origin' // sends cookie automatically
+        credentials: 'include' // sends cookie automatically across same & cross origin/tunnel setups
       });
+
+      // Synchronize token if server returns refreshed X-Session-Token header
+      const responseToken = res.headers.get('x-session-token');
+      if (responseToken && responseToken !== token) {
+        this.setToken(responseToken);
+      }
 
       const json = await res.json().catch(() => ({}));
 
@@ -52,7 +72,11 @@ const API = {
   },
 
   async getMe() {
-    return this.request('/api/auth/me');
+    const data = await this.request('/api/auth/me');
+    if (data && data.token) {
+      this.setToken(data.token);
+    }
+    return data;
   },
 
   async login(identifier, password) {
@@ -87,9 +111,10 @@ const API = {
   },
 
   async submitFlag(challengeId, flag) {
+    const token = this.getToken();
     return this.request('/api/submit-flag', {
       method: 'POST',
-      body: { challengeId, flag }
+      body: { challengeId, flag, token }
     });
   },
 
