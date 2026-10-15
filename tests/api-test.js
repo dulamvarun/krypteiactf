@@ -1,3 +1,4 @@
+process.env.FORCE_MEMORY_DB = 'true';
 const assert = require('assert');
 const app = require('../server');
 const db = require('../database');
