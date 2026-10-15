@@ -413,17 +413,52 @@ app.get('/api/rules', (req, res) => {
 });
 
 // --- Administrator Middleware & Routes ---
-function adminAuthMiddleware(req, res, next) {
-  let token = req.cookies['krypteia_admin_session'];
-  if (!token && req.headers.authorization) {
+function resolveAdminToken(req) {
+  const candidates = [];
+
+  // 1. Authorization header Bearer token (highest priority for programmatic API calls)
+  if (req.headers && req.headers.authorization) {
     const parts = req.headers.authorization.split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      token = parts[1];
+    if (parts.length === 2 && parts[0].toLowerCase() === 'bearer' && parts[1]) {
+      candidates.push(parts[1].trim());
     }
   }
 
-  if (token && db.validateAdminSession(token)) {
+  // 2. HTTP-only session cookie
+  if (req.cookies && req.cookies['krypteia_admin_session']) {
+    candidates.push(String(req.cookies['krypteia_admin_session']).trim());
+  }
+
+  // 3. Fallback header or query param
+  if (req.headers && req.headers['x-admin-token']) {
+    candidates.push(String(req.headers['x-admin-token']).trim());
+  }
+  if (req.query && req.query.admin_token) {
+    candidates.push(String(req.query.admin_token).trim());
+  }
+
+  // Find first candidate token that is currently valid in the database
+  for (const t of candidates) {
+    if (t && db.validateAdminSession(t)) {
+      return t;
+    }
+  }
+
+  return null;
+}
+
+function adminAuthMiddleware(req, res, next) {
+  const token = resolveAdminToken(req);
+
+  if (token) {
     req.adminToken = token;
+    // Resync cookie so browser session remains fresh and never out of sync with localStorage
+    res.cookie('krypteia_admin_session', token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
     return next();
   }
 
@@ -443,7 +478,8 @@ app.post('/api/admin/login', (req, res) => {
     res.cookie('krypteia_admin_session', token, {
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000
     });
     return res.json({
       success: true,
@@ -461,34 +497,28 @@ app.post('/api/admin/login', (req, res) => {
 
 // 2. Admin Logout
 app.post('/api/admin/logout', (req, res) => {
-  let token = req.cookies['krypteia_admin_session'];
-  if (!token && req.headers.authorization) {
-    const parts = req.headers.authorization.split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      token = parts[1];
-    }
-  }
+  const token = resolveAdminToken(req);
   if (token) {
     db.deleteAdminSession(token);
   }
-  res.clearCookie('krypteia_admin_session');
+  res.clearCookie('krypteia_admin_session', { path: '/' });
   res.json({ success: true, message: 'Logged out from administrator portal.' });
 });
 
 // 3. Admin Status & Overview
 app.get('/api/admin/status', (req, res) => {
-  let token = req.cookies['krypteia_admin_session'];
-  if (!token && req.headers.authorization) {
-    const parts = req.headers.authorization.split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      token = parts[1];
-    }
-  }
-
-  const authenticated = Boolean(token && db.validateAdminSession(token));
-  if (!authenticated) {
+  const token = resolveAdminToken(req);
+  if (!token) {
     return res.json({ authenticated: false });
   }
+
+  // Refresh cookie to keep session alive and synchronized with client
+  res.cookie('krypteia_admin_session', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
 
   const config = db.getCompetitionConfig();
   const solveCounts = db.getChallengeSolveCounts();
@@ -497,6 +527,7 @@ app.get('/api/admin/status', (req, res) => {
 
   res.json({
     authenticated: true,
+    token,
     admin: { id: 'pappu', role: 'admin' },
     config,
     challenges: challengeList,

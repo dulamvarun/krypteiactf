@@ -185,8 +185,9 @@
   // --- API Client Helper ---
   async function adminFetch(endpoint, options = {}) {
     const headers = options.headers || {};
-    if (state.token && !headers['Authorization']) {
-      headers['Authorization'] = `Bearer ${state.token}`;
+    const token = state.token || localStorage.getItem('krypteia_admin_token') || '';
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     if (options.body && typeof options.body === 'object') {
@@ -198,7 +199,7 @@
       method: options.method || 'GET',
       headers,
       body: options.body,
-      credentials: 'same-origin'
+      credentials: 'include'
     });
 
     const data = await res.json().catch(() => ({}));
@@ -270,17 +271,27 @@
   async function checkAuthStatus() {
     try {
       const data = await adminFetch('/api/admin/status');
-      if (data.authenticated) {
+      if (data && data.authenticated) {
+        if (data.token) {
+          state.token = data.token;
+          localStorage.setItem('krypteia_admin_token', data.token);
+        }
         onAuthenticated(data);
       } else {
         onUnauthenticated();
       }
     } catch (e) {
-      onUnauthenticated();
+      if (!state.token && !localStorage.getItem('krypteia_admin_token')) {
+        onUnauthenticated();
+      }
     }
   }
 
   function onAuthenticated(data) {
+    if (data && data.token) {
+      state.token = data.token;
+      localStorage.setItem('krypteia_admin_token', data.token);
+    }
     if (el.loginView) el.loginView.style.display = 'none';
     if (el.dashboardView) el.dashboardView.style.display = 'flex';
     if (el.adminBadge) el.adminBadge.style.display = 'inline-flex';
@@ -323,7 +334,8 @@
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, password })
+        body: JSON.stringify({ id, password }),
+        credentials: 'include'
       });
 
       const data = await res.json().catch(() => ({}));
@@ -419,10 +431,17 @@
   async function fetchAdminData() {
     try {
       const data = await adminFetch('/api/admin/status');
-      if (data.authenticated) {
+      if (data && data.authenticated) {
+        if (data.token) {
+          state.token = data.token;
+          localStorage.setItem('krypteia_admin_token', data.token);
+        }
         populateDashboard(data);
       } else {
-        onUnauthenticated();
+        // Only trigger onUnauthenticated if explicitly unauthenticated and no valid token exists
+        if (!state.token && !localStorage.getItem('krypteia_admin_token')) {
+          onUnauthenticated();
+        }
       }
     } catch (_) {
       // background polling silent
@@ -863,7 +882,10 @@
       await fetchAdminData();
     } catch (err) {
       showToast(err.message || 'Failed to toggle challenge lock', 'error');
-      await fetchAdminData();
+      if (ch) {
+        ch.isLocked = !newLockState;
+        renderChallengesTable();
+      }
     }
   }
 
@@ -881,7 +903,6 @@
       await fetchAdminData();
     } catch (err) {
       showToast(err.message || 'Failed to bulk lock challenges', 'error');
-      await fetchAdminData();
     }
   }
 

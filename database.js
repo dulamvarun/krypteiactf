@@ -1455,7 +1455,7 @@ function setAllChallengeLocks(challengeIds, isLocked) {
 function createAdminSession() {
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
-  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
+  const expires = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days persistent session
 
   if (useSqlite) {
     sqliteDb.prepare('INSERT INTO admin_sessions (token, created_at, expires_at) VALUES (?, ?, ?)')
@@ -1472,23 +1472,32 @@ function createAdminSession() {
 }
 
 function validateAdminSession(token) {
-  if (!token) return false;
+  if (!token || typeof token !== 'string') return false;
+  const clean = token.trim();
+  if (!clean) return false;
   const now = new Date().toISOString();
   if (useSqlite) {
-    const row = sqliteDb.prepare('SELECT token FROM admin_sessions WHERE token = ? AND expires_at > ?').get(token, now);
-    return Boolean(row);
+    try {
+      const row = sqliteDb.prepare('SELECT token FROM admin_sessions WHERE token = ? AND expires_at > ?').get(clean, now);
+      return Boolean(row);
+    } catch (_) {
+      return false;
+    }
   } else {
-    const s = (memoryStore.adminSessions || []).find(item => item.token === token && item.expires_at > now);
+    const s = (memoryStore.adminSessions || []).find(item => item.token === clean && item.expires_at > now);
     return Boolean(s);
   }
 }
 
 function deleteAdminSession(token) {
-  if (!token) return;
+  if (!token || typeof token !== 'string') return;
+  const clean = token.trim();
   if (useSqlite) {
-    sqliteDb.prepare('DELETE FROM admin_sessions WHERE token = ?').run(token);
+    try {
+      sqliteDb.prepare('DELETE FROM admin_sessions WHERE token = ?').run(clean);
+    } catch (_) {}
   } else {
-    memoryStore.adminSessions = (memoryStore.adminSessions || []).filter(s => s.token !== token);
+    memoryStore.adminSessions = (memoryStore.adminSessions || []).filter(s => s.token !== clean);
   }
 }
 
