@@ -385,7 +385,9 @@
         'challenge_created',
         'challenge_updated',
         'challenge_deleted',
-        'leaderboard_reset'
+        'leaderboard_reset',
+        'user_registered',
+        'user_deleted'
       ];
       refreshEvents.forEach(evt => {
         adminEventSource.addEventListener(evt, () => {
@@ -957,7 +959,7 @@
     if (list.length === 0) {
       el.leaderboardTableBody.innerHTML = `
         <tr>
-          <td colspan="7" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+          <td colspan="8" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
             No participant solves recorded yet. Standings will appear as teams submit flags.
           </td>
         </tr>
@@ -980,10 +982,47 @@
         <td><span class="mono" style="color: var(--accent-green); font-weight: 700;">${row.totalPoints || 0} PTS</span></td>
         <td><span class="mono" style="font-size: 0.82rem; color: var(--text-muted);">${escapeHtml(row.lastSolveTimeIST || 'None')}</span></td>
         <td><span class="mono" style="font-size: 0.82rem; color: var(--text-muted);">${escapeHtml(row.registeredAtIST || 'N/A')}</span></td>
+        <td style="text-align: right;">
+          <button 
+            type="button" 
+            class="btn btn-danger btn-sm" 
+            id="del-user-btn-${row.userId}" 
+            title="Delete User"
+            style="padding: 0.25rem 0.55rem; font-size: 0.78rem;"
+          >
+            🗑️ Delete
+          </button>
+        </td>
       `;
+
+      const delUserBtn = tr.querySelector(`#del-user-btn-${row.userId}`);
+      if (delUserBtn) {
+        delUserBtn.addEventListener('click', () => handleDeleteUser(row.userId, row.username, row.email));
+      }
 
       el.leaderboardTableBody.appendChild(tr);
     });
+  }
+
+  async function handleDeleteUser(userId, username, email) {
+    if (!confirm(`Are you sure you want to permanently delete participant "${username}" (${email || 'No email'})?\n\nThis will remove their account, flag solves, and leaderboard entry.`)) {
+      return;
+    }
+
+    // Instant optimistic UI update
+    state.leaderboard = state.leaderboard.filter(item => item.userId !== userId);
+    renderLeaderboard(el.lbAdminSearch ? el.lbAdminSearch.value.toLowerCase().trim() : '');
+
+    try {
+      const res = await adminFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE'
+      });
+      showToast(res.message || `Participant "${username}" deleted`, 'success');
+      await fetchAdminData();
+    } catch (err) {
+      showToast(err.message || 'Failed to delete user', 'error');
+      await fetchAdminData();
+    }
   }
 
   async function handleExportSheet() {

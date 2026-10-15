@@ -180,6 +180,11 @@ app.post('/api/auth/register', (req, res) => {
 
     const stats = db.getUserStats(user.id);
 
+    notifyParticipants('user_registered', {
+      userId: user.id,
+      username: user.username
+    });
+
     res.status(201).json({
       message: 'Registration successful! Welcome to KRYPTEIA CTF.',
       token,
@@ -586,6 +591,20 @@ app.post('/api/admin/reset-leaderboard', adminAuthMiddleware, (req, res) => {
     success: true,
     message: 'Leaderboard and participant accounts cleared successfully.'
   });
+});
+
+// 8b. Delete Individual Participant / User
+app.delete('/api/admin/users/:id', adminAuthMiddleware, (req, res) => {
+  try {
+    const result = db.deleteUser(req.params.id);
+    notifyParticipants('user_deleted', {
+      userId: req.params.id,
+      username: result.user ? result.user.username : 'User'
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // --- Dynamic Challenge & Flag Management APIs ---

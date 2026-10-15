@@ -200,6 +200,11 @@ try {
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_solves_user ON solves(user_id);
+    CREATE INDEX IF NOT EXISTS idx_solves_challenge ON solves(challenge_id);
+    CREATE INDEX IF NOT EXISTS idx_submissions_user ON submissions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   `);
 
   useSqlite = true;
@@ -426,6 +431,47 @@ function deleteSession(token) {
   } else {
     const idx = memoryStore.sessions.findIndex(s => s.token === token);
     if (idx !== -1) memoryStore.sessions.splice(idx, 1);
+  }
+}
+
+function deleteUser(userId) {
+  const uid = parseInt(userId, 10);
+  if (isNaN(uid)) throw new Error('Invalid user ID');
+
+  if (useSqlite) {
+    const user = sqliteDb.prepare('SELECT id, username, email FROM users WHERE id = ?').get(uid);
+    if (!user) {
+      throw new Error(`User with ID ${uid} not found`);
+    }
+
+    sqliteDb.transaction(() => {
+      sqliteDb.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
+      sqliteDb.prepare('DELETE FROM solves WHERE user_id = ?').run(uid);
+      sqliteDb.prepare('DELETE FROM submissions WHERE user_id = ?').run(uid);
+      sqliteDb.prepare('DELETE FROM users WHERE id = ?').run(uid);
+    })();
+
+    return {
+      success: true,
+      message: `User "${user.username}" (ID: ${uid}) deleted successfully`,
+      user
+    };
+  } else {
+    const userIndex = (memoryStore.users || []).findIndex(u => u.id === uid);
+    if (userIndex === -1) {
+      throw new Error(`User with ID ${uid} not found`);
+    }
+    const user = memoryStore.users[userIndex];
+    memoryStore.users.splice(userIndex, 1);
+    memoryStore.sessions = (memoryStore.sessions || []).filter(s => s.user_id !== uid);
+    memoryStore.solves = (memoryStore.solves || []).filter(s => s.user_id !== uid);
+    memoryStore.submissions = (memoryStore.submissions || []).filter(s => s.user_id !== uid);
+
+    return {
+      success: true,
+      message: `User "${user.username}" (ID: ${uid}) deleted successfully`,
+      user
+    };
   }
 }
 
@@ -1467,6 +1513,7 @@ function getDetailedLeaderboardForExport() {
       const user = usersMap[entry.userId] || {};
       const solvedList = (solvesMap[entry.userId] || []).join('; ');
       return {
+        userId: entry.userId,
         rank: entry.rank,
         username: entry.username,
         email: user.email || 'N/A',
@@ -1484,6 +1531,7 @@ function getDetailedLeaderboardForExport() {
       const solves = memoryStore.solves.filter(s => s.user_id === entry.userId);
       const solvedList = solves.map(s => s.challenge_id).join('; ');
       return {
+        userId: entry.userId,
         rank: entry.rank,
         username: entry.username,
         email: user.email || 'N/A',
@@ -1545,6 +1593,7 @@ module.exports = {
   createSession,
   getUserBySession,
   deleteSession,
+  deleteUser,
   recordSolve,
   recordSubmission,
   getUserSolves,

@@ -411,6 +411,32 @@ async function runTests() {
     assert.strictEqual(standings[1].rank, 2);
     console.log('  ✓ Leaderboard ranking accurately gives top position to first submission when marks are equal');
 
+    // Test 19: New user immediately added to leaderboard & Admin user deletion
+    console.log('[19] Testing immediate addition to leaderboard upon registration and admin user deletion');
+    const u3Res = await request('/api/auth/register', {
+      method: 'POST',
+      body: { username: 'NewCadet99', email: 'cadet99@spec.ac.in', password: 'Password123!' }
+    });
+    assert.strictEqual(u3Res.status, 201);
+    const u3Id = u3Res.json.user.id;
+
+    // Check leaderboard: NewCadet99 must be present on leaderboard immediately
+    const lbWithNew = await request('/api/leaderboard');
+    assert.ok(lbWithNew.json.leaderboard.some(u => u.username === 'NewCadet99'), 'Newly registered user must appear on leaderboard');
+
+    // Admin deletes user
+    const delUserRes = await request(`/api/admin/users/${u3Id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.strictEqual(delUserRes.status, 200);
+    assert.strictEqual(delUserRes.json.success, true);
+
+    // Verify user is removed from leaderboard
+    const lbAfterDel = await request('/api/leaderboard');
+    assert.ok(!lbAfterDel.json.leaderboard.some(u => u.username === 'NewCadet99'), 'Deleted user must be removed from leaderboard');
+    console.log('  ✓ User instantly appears on leaderboard upon registration and admin can delete user cleanly');
+
     console.log('\n>>> ALL BACKEND API TESTS PASSED SUCCESSFULLY! <<<');
   } finally {
     db.clearAllParticipants();

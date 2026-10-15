@@ -562,6 +562,34 @@
       }
     });
 
+    // 9. User Registered
+    liveEventSource.addEventListener('user_registered', async (event) => {
+      try {
+        if (state.activeTab === 'leaderboard') {
+          await loadLeaderboard();
+        }
+      } catch (e) {
+        console.error('Error handling user_registered:', e);
+      }
+    });
+
+    // 10. User Deleted
+    liveEventSource.addEventListener('user_deleted', async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (state.currentUser && String(state.currentUser.id) === String(data.userId)) {
+          showToast('⚠️ Your participant account was removed by administrator.', 'warning');
+          await handleLogout();
+          return;
+        }
+        if (state.activeTab === 'leaderboard') {
+          await loadLeaderboard();
+        }
+      } catch (e) {
+        console.error('Error handling user_deleted:', e);
+      }
+    });
+
     liveEventSource.onerror = () => {
       // EventSource automatically handles reconnection
       console.warn('Live sync SSE connection interrupted; waiting for auto-reconnect...');
