@@ -895,18 +895,15 @@ seedChallengesIfNeeded();
 // Challenge Management & Cryptographic Flag Operations
 // -------------------------------------------------------------
 
-function getAllPublicChallenges(userSolves = new Set(), solveCounts = null, challengeLocks = null) {
+function getAllPublicChallenges(userSolves = new Set(), solveCounts = null) {
   if (!solveCounts) {
     solveCounts = getChallengeSolveCounts();
-  }
-  if (!challengeLocks) {
-    challengeLocks = getChallengeLocks();
   }
 
   let rows = [];
   if (useSqlite) {
     rows = sqliteDb.prepare(`
-      SELECT id, title, category, difficulty, points, description, hints_json, attachments_json, is_locked, created_at
+      SELECT id, title, category, difficulty, points, description, hints_json, attachments_json, created_at
       FROM challenges
       ORDER BY points ASC, id ASC
     `).all();
@@ -915,12 +912,6 @@ function getAllPublicChallenges(userSolves = new Set(), solveCounts = null, chal
   }
 
   return rows.map(c => {
-    let isLocked = false;
-    if (challengeLocks && challengeLocks[c.id] !== undefined) {
-      isLocked = Boolean(challengeLocks[c.id]);
-    } else {
-      isLocked = Boolean(c.is_locked);
-    }
     let hints = [];
     let attachments = [];
     try {
@@ -936,24 +927,22 @@ function getAllPublicChallenges(userSolves = new Set(), solveCounts = null, chal
       category: c.category,
       difficulty: c.difficulty,
       points: Number(c.points),
-      description: isLocked ? '' : c.description,
-      hints: isLocked ? [] : hints,
-      attachments: isLocked ? [] : attachments,
+      description: c.description,
+      hints,
+      attachments,
       solveCount: (solveCounts && solveCounts[c.id]) || 0,
-      isSolved: userSolves ? userSolves.has(c.id) : false,
-      isLocked
+      isSolved: userSolves ? userSolves.has(c.id) : false
     };
   });
 }
 
 function getAdminChallenges() {
   const solveCounts = getChallengeSolveCounts();
-  const locks = getChallengeLocks();
   let rows = [];
 
   if (useSqlite) {
     rows = sqliteDb.prepare(`
-      SELECT id, title, category, difficulty, points, description, hints_json, attachments_json, flag_hash, flag_salt, flag_encrypted, is_locked, created_at, updated_at
+      SELECT id, title, category, difficulty, points, description, hints_json, attachments_json, flag_hash, flag_salt, flag_encrypted, created_at, updated_at
       FROM challenges
       ORDER BY points ASC, id ASC
     `).all();
@@ -971,12 +960,6 @@ function getAdminChallenges() {
       attachments = typeof c.attachments_json === 'string' ? JSON.parse(c.attachments_json || '[]') : (c.attachments || []);
     } catch (_) { attachments = []; }
 
-    let isLocked = false;
-    if (locks && locks[c.id] !== undefined) {
-      isLocked = Boolean(locks[c.id]);
-    } else {
-      isLocked = Boolean(c.is_locked);
-    }
     const decrypted = decryptFlag(c.flag_encrypted);
 
     return {
@@ -989,7 +972,6 @@ function getAdminChallenges() {
       hints,
       attachments,
       solveCount: solveCounts[c.id] || 0,
-      isLocked,
       hasFlag: Boolean(c.flag_hash),
       flagSalt: (c.flag_salt || '').substring(0, 8) + '...',
       flagHashPreview: (c.flag_hash || '').substring(0, 12) + '...',
@@ -1050,15 +1032,11 @@ function createChallenge(data) {
   let salt = '';
   let flagHash = '';
   let flagEncrypted = null;
-  let isLocked = data.isLocked ? 1 : 0;
 
   if (rawFlag) {
     salt = crypto.randomBytes(16).toString('hex');
     flagHash = hashFlag(rawFlag, salt);
     flagEncrypted = encryptFlag(rawFlag);
-  } else {
-    // If no flag provided, question is locked until organizer sets flag
-    isLocked = 1;
   }
 
   const hintsJson = JSON.stringify(Array.isArray(data.hints) ? data.hints : []);
@@ -1075,7 +1053,7 @@ function createChallenge(data) {
     `).run(
       id, title, category, difficulty, points, description,
       hintsJson, attachmentsJson, flagHash, salt, flagEncrypted,
-      isLocked, now, now
+      0, now, now
     );
   } else {
     if (!memoryStore.challenges) memoryStore.challenges = [];
@@ -1083,12 +1061,11 @@ function createChallenge(data) {
       id, title, category, difficulty, points, description,
       hints_json: hintsJson, attachments_json: attachmentsJson,
       flag_hash: flagHash, flag_salt: salt, flag_encrypted: flagEncrypted,
-      is_locked: isLocked, created_at: now, updated_at: now
+      is_locked: 0, created_at: now, updated_at: now
     });
   }
 
-  setChallengeLock(id, Boolean(isLocked));
-  return { id, title, category, points, isLocked: Boolean(isLocked) };
+  return { id, title, category, points };
 }
 
 function updateChallenge(id, data) {
@@ -1124,7 +1101,6 @@ function updateChallenge(id, data) {
     flagEncrypted = encryptFlag(data.flag.trim());
   }
 
-  const isLocked = data.isLocked !== undefined ? (data.isLocked ? 1 : 0) : challenge.is_locked;
   const now = new Date().toISOString();
 
   if (useSqlite) {
@@ -1132,12 +1108,12 @@ function updateChallenge(id, data) {
       UPDATE challenges SET
         title = ?, category = ?, difficulty = ?, points = ?, description = ?,
         hints_json = ?, attachments_json = ?, flag_hash = ?, flag_salt = ?, flag_encrypted = ?,
-        is_locked = ?, updated_at = ?
+        is_locked = 0, updated_at = ?
       WHERE id = ?
     `).run(
       title, category, difficulty, points, description,
       hintsJson, attachmentsJson, flagHash, flagSalt, flagEncrypted,
-      isLocked, now, id
+      now, id
     );
   } else {
     const item = (memoryStore.challenges || []).find(c => c.id === id);
@@ -1146,13 +1122,12 @@ function updateChallenge(id, data) {
         title, category, difficulty, points, description,
         hints_json: hintsJson, attachments_json: attachmentsJson,
         flag_hash: flagHash, flag_salt: flagSalt, flag_encrypted: flagEncrypted,
-        is_locked: isLocked, updated_at: now
+        is_locked: 0, updated_at: now
       });
     }
   }
 
-  setChallengeLock(id, Boolean(isLocked));
-  return { id, title, category, points, isLocked: Boolean(isLocked) };
+  return { id, title, category, points };
 }
 
 function deleteChallenge(id) {
@@ -1163,7 +1138,9 @@ function deleteChallenge(id) {
 
   if (useSqlite) {
     sqliteDb.prepare('DELETE FROM challenges WHERE id = ?').run(id);
-    sqliteDb.prepare('DELETE FROM challenge_locks WHERE challenge_id = ?').run(id);
+    try {
+      sqliteDb.prepare('DELETE FROM challenge_locks WHERE challenge_id = ?').run(id);
+    } catch (_) {}
   } else {
     memoryStore.challenges = (memoryStore.challenges || []).filter(c => c.id !== id);
     if (memoryStore.challengeLocks) delete memoryStore.challengeLocks[id];
@@ -1218,14 +1195,16 @@ function seedChallengesIfNeeded() {
         try {
           const existing = getChallengeById(c.id);
           if (existing) {
-            // Keep flags, points, locks, and solves intact, but sync refined non-obvious hints and description
+            // Keep flags, points, locks, and solves intact, but sync refined non-obvious hints, attachments, and description
             const hintsJson = JSON.stringify(Array.isArray(c.hints) ? c.hints : []);
+            const attachmentsJson = JSON.stringify(Array.isArray(c.attachments) ? c.attachments : []);
             if (useSqlite) {
               sqliteDb.prepare(`
-                UPDATE challenges SET hints_json = ?, description = ? WHERE id = ?
-              `).run(hintsJson, c.description, c.id);
+                UPDATE challenges SET hints_json = ?, attachments_json = ?, description = ? WHERE id = ?
+              `).run(hintsJson, attachmentsJson, c.description, c.id);
             } else {
               existing.hints_json = hintsJson;
+              existing.attachments_json = attachmentsJson;
               existing.description = c.description;
             }
           } else {
@@ -1238,8 +1217,7 @@ function seedChallengesIfNeeded() {
               description: c.description,
               hints: c.hints,
               attachments: c.attachments,
-              flag: c.flag,
-              isLocked: false
+              flag: c.flag
             });
           }
         } catch (_) {}
@@ -1349,104 +1327,22 @@ function setCompetitionTimer(startTimeIso, endTimeIso = null, status = null) {
 }
 
 // -------------------------------------------------------------
-// Challenge Locks Management
+// Challenge Locks (Disabled - all challenges always unlocked)
 // -------------------------------------------------------------
 function getChallengeLocks() {
-  const map = {};
-  if (useSqlite) {
-    const chRows = sqliteDb.prepare('SELECT id, is_locked FROM challenges').all();
-    chRows.forEach(r => {
-      map[r.id] = Boolean(r.is_locked);
-    });
-    const rows = sqliteDb.prepare('SELECT challenge_id, is_locked FROM challenge_locks').all();
-    rows.forEach(r => {
-      map[r.challenge_id] = Boolean(r.is_locked);
-    });
-  } else {
-    (memoryStore.challenges || []).forEach(c => {
-      map[c.id] = Boolean(c.is_locked);
-    });
-    Object.keys(memoryStore.challengeLocks || {}).forEach(k => {
-      map[k] = Boolean(memoryStore.challengeLocks[k]);
-    });
-  }
-  return map;
+  return {};
 }
 
-function isChallengeLocked(challengeId) {
-  if (!challengeId) return false;
-  if (useSqlite) {
-    const row = sqliteDb.prepare('SELECT is_locked FROM challenge_locks WHERE challenge_id = ?').get(challengeId);
-    if (row !== undefined) {
-      return Boolean(row.is_locked);
-    }
-    const ch = sqliteDb.prepare('SELECT is_locked FROM challenges WHERE id = ?').get(challengeId);
-    return ch ? Boolean(ch.is_locked) : false;
-  } else {
-    if (memoryStore.challengeLocks && memoryStore.challengeLocks[challengeId] !== undefined) {
-      return Boolean(memoryStore.challengeLocks[challengeId]);
-    }
-    const ch = (memoryStore.challenges || []).find(c => c.id === challengeId);
-    return ch ? Boolean(ch.is_locked) : false;
-  }
+function isChallengeLocked(_challengeId) {
+  return false;
 }
 
-function setChallengeLock(challengeId, isLocked) {
-  const val = isLocked ? 1 : 0;
-  const now = new Date().toISOString();
-  if (useSqlite) {
-    sqliteDb.transaction(() => {
-      sqliteDb.prepare(`
-        INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
-      `).run(challengeId, val, now);
-      sqliteDb.prepare(`
-        UPDATE challenges SET is_locked = ?, updated_at = ? WHERE id = ?
-      `).run(val, now, challengeId);
-    })();
-  } else {
-    if (!memoryStore.challengeLocks) memoryStore.challengeLocks = {};
-    memoryStore.challengeLocks[challengeId] = Boolean(isLocked);
-    const item = (memoryStore.challenges || []).find(c => c.id === challengeId);
-    if (item) {
-      item.is_locked = val;
-      item.updated_at = now;
-    }
-  }
-  return { challengeId, isLocked: Boolean(isLocked) };
+function setChallengeLock(challengeId, _isLocked) {
+  return { challengeId, isLocked: false };
 }
 
-function setAllChallengeLocks(challengeIds, isLocked) {
-  const val = isLocked ? 1 : 0;
-  const now = new Date().toISOString();
-  if (useSqlite) {
-    sqliteDb.transaction(() => {
-      const lockStmt = sqliteDb.prepare(`
-        INSERT INTO challenge_locks (challenge_id, is_locked, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(challenge_id) DO UPDATE SET is_locked = excluded.is_locked, updated_at = excluded.updated_at
-      `);
-      const chStmt = sqliteDb.prepare(`
-        UPDATE challenges SET is_locked = ?, updated_at = ? WHERE id = ?
-      `);
-      challengeIds.forEach(id => {
-        lockStmt.run(id, val, now);
-        chStmt.run(val, now, id);
-      });
-    })();
-  } else {
-    if (!memoryStore.challengeLocks) memoryStore.challengeLocks = {};
-    challengeIds.forEach(id => {
-      memoryStore.challengeLocks[id] = Boolean(isLocked);
-      const item = (memoryStore.challenges || []).find(c => c.id === id);
-      if (item) {
-        item.is_locked = val;
-        item.updated_at = now;
-      }
-    });
-  }
-  return getChallengeLocks();
+function setAllChallengeLocks(_challengeIds, _isLocked) {
+  return {};
 }
 
 // -------------------------------------------------------------

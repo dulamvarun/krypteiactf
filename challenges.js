@@ -202,6 +202,55 @@ Your task is to inspect the provided evidence and recover the complete flag.`,
         type: 'image/png'
       }
     ]
+  },
+  {
+    id: 'forensics-10',
+    title: 'Northwind Capital — Digital Forensics CTF',
+    category: 'Digital Forensics',
+    difficulty: 'Expert',
+    points: 500,
+    description: `## Scenario
+
+A finance analyst resigned on a Friday. On Monday, the CFO discovered that Northwind Capital’s confidential Q3 ledger had leaked.
+
+The analyst's workstation appears clean. There are no obvious traces in the application logs, and the network traffic looks mostly like ordinary office activity.
+
+Your investigation team has recovered two primary evidence sources:
+
+- A disk image from the analyst's laptop.
+- A packet capture from the office gateway.
+
+Additional evidence may be hidden inside files recovered from the workstation.
+
+Your mission is to reconstruct the sequence of events, identify the concealed data-transfer method, recover the evidence left behind, and determine what the analyst took.
+
+## Rules
+- The flag format is \`KRYPTEIA{...}\`.
+- A flag found directly in a log, email, or other obvious location may be a decoy. Validate your findings against the evidence.
+- Each stage depends on evidence recovered from earlier stages.
+- Do not assume that a deleted file has left no recoverable traces.
+- All evidence is fictional and intended exclusively for this educational CTF.
+
+**Your objective:** Follow the evidence from network traffic to filesystem artifacts, document internals, and image analysis to recover the final flag.`,
+    hints: [
+      'Correlate packet capture timestamps and DNS queries against workstation filesystem journal artifacts.',
+      'Examine reconstructed document internals and embedded recovery streams for layered transformations and cryptographic keys.'
+    ],
+    attachments: [
+      {
+        name: 'northwind_capital_forensics.zip',
+        url: '/attachments/northwind_capital_forensics.zip',
+        size: '41.3 KB',
+        type: 'application/zip'
+      },
+      {
+        name: 'Google Drive Evidence Bundle',
+        url: 'https://drive.google.com/drive/folders/1s0LiR681U_WEOCViJgTCOFu6SNNbuttc?usp=sharing',
+        size: 'Cloud Drive',
+        type: 'external/link'
+      }
+    ],
+    flag: 'KRYPTEIA{n0rthw1nd_q3_l3dg3r_3xf1ltr4t3d_2026}'
   }
 ];
 

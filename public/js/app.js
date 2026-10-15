@@ -80,7 +80,6 @@
     elements.preStartTimeIst = document.getElementById('pre-start-time-ist');
     elements.preAuthNotice = document.getElementById('pre-auth-notice');
     elements.preAuthBtn = document.getElementById('pre-auth-btn');
-    elements.modalLockedBanner = document.getElementById('modal-locked-banner');
 
     // Challenge Detail Modal
     elements.challengeModal = document.getElementById('challenge-modal');
@@ -481,27 +480,7 @@
       console.log('⚡ Live synchronization connected with Krypteia CTF Server.');
     });
 
-    // 1. Challenge Lock / Unlock (Individual)
-    liveEventSource.addEventListener('challenge_lock_updated', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleLiveLockUpdate(data.challengeId, data.isLocked);
-      } catch (e) {
-        console.error('Error handling challenge_lock_updated:', e);
-      }
-    });
-
-    // 2. Challenge Lock / Unlock All (Bulk)
-    liveEventSource.addEventListener('challenge_lock_all_updated', (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleLiveLockAll(data.isLocked, data.locks);
-      } catch (e) {
-        console.error('Error handling challenge_lock_all_updated:', e);
-      }
-    });
-
-    // 3. Challenge Created
+    // 1. Challenge Created
     liveEventSource.addEventListener('challenge_created', async (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -596,42 +575,7 @@
     };
   }
 
-  async function handleLiveLockUpdate(challengeId, isLocked) {
-    const ch = state.challenges.find(c => c.id === challengeId);
-    if (ch) {
-      ch.isLocked = Boolean(isLocked);
-      renderChallenges();
-    }
 
-    if (state.currentModalChallengeId === challengeId) {
-      if (isLocked) {
-        closeChallengeModal();
-        showToast('🔒 This question was just locked by the administrator.', 'info');
-      } else {
-        await loadChallenges();
-        openChallengeModal(challengeId);
-        showToast('🔓 This question is now unlocked and available!', 'success');
-        return;
-      }
-    }
-
-    // Fully reload challenges from API so unstripped description/hints/attachments are synced
-    await loadChallenges();
-  }
-
-  async function handleLiveLockAll(isLocked, locks) {
-    await loadChallenges();
-
-    if (state.currentModalChallengeId) {
-      const modalCh = state.challenges.find(c => c.id === state.currentModalChallengeId);
-      if (modalCh && modalCh.isLocked) {
-        closeChallengeModal();
-        showToast('🔒 All challenges have been locked by the administrator.', 'info');
-      }
-    }
-
-    showToast(isLocked ? '🔒 All challenges locked by administrator.' : '🔓 All challenges unlocked!', 'info');
-  }
 
   async function handleLiveChallengeCreated(data) {
     await loadChallenges();
@@ -649,11 +593,7 @@
       if (state.currentModalChallengeId === data.challengeId) {
         const updated = state.challenges.find(c => c.id === data.challengeId);
         if (updated) {
-          if (updated.isLocked) {
-            closeChallengeModal();
-            showToast('🔒 This question was locked by the administrator.', 'info');
-          } else {
-            // Live update modal contents
+          // Live update modal contents
             if (elements.modalTitle) elements.modalTitle.textContent = updated.title;
             if (elements.modalCategory) elements.modalCategory.textContent = updated.category;
             if (elements.modalPoints) elements.modalPoints.textContent = `${updated.points} PTS`;
@@ -704,7 +644,6 @@
             }
 
             showToast(`ℹ️ "${updated.title}" challenge details have been updated.`, 'info');
-          }
         }
       }
     }
@@ -799,7 +738,6 @@
                   cur.title !== f.title || 
                   cur.points !== f.points || 
                   cur.difficulty !== f.difficulty || 
-                  cur.isLocked !== f.isLocked || 
                   cur.isSolved !== f.isSolved || 
                   cur.solveCount !== f.solveCount ||
                   cur.description !== f.description) {
@@ -820,9 +758,6 @@
               if (!currentModalCh) {
                 closeChallengeModal();
                 showToast('⚠️ The challenge you were viewing was removed.', 'warning');
-              } else if (currentModalCh.isLocked) {
-                closeChallengeModal();
-                showToast('🔒 This question was locked by the administrator.', 'info');
               } else if (elements.modalSolvesCount) {
                 elements.modalSolvesCount.textContent = `${currentModalCh.solveCount || 0} solves`;
               }
@@ -939,8 +874,7 @@
 
     filtered.forEach(c => {
       const card = document.createElement('div');
-      const isLocked = Boolean(c.isLocked);
-      card.className = `challenge-card ${c.isSolved ? 'solved' : 'unsolved'} ${isLocked ? 'locked' : ''}`;
+      card.className = `challenge-card ${c.isSolved ? 'solved' : 'unsolved'}`;
       card.setAttribute('data-id', c.id);
 
       const diffClass = `diff-${c.difficulty.toLowerCase()}`;
@@ -951,14 +885,9 @@
         .replace(/`([^`]+)`/g, '$1')
         .substring(0, 110) + '...';
 
-      let statusBadgeHtml = '';
-      if (isLocked) {
-        statusBadgeHtml = `<span class="card-status-pill pill-locked">🔒 LOCKED</span>`;
-      } else if (c.isSolved) {
-        statusBadgeHtml = `<span class="card-status-pill pill-solved">✓ SOLVED</span>`;
-      } else {
-        statusBadgeHtml = `<span class="card-status-pill pill-unsolved">○ UNSOLVED</span>`;
-      }
+      const statusBadgeHtml = c.isSolved
+        ? `<span class="card-status-pill pill-solved">✓ SOLVED</span>`
+        : `<span class="card-status-pill pill-unsolved">○ UNSOLVED</span>`;
 
       card.innerHTML = `
         <div class="card-top-row">
@@ -972,28 +901,19 @@
         </div>
         <div class="card-main-content">
           <h3 class="card-title ${c.isSolved ? 'title-solved' : ''}">
-            ${c.isSolved ? '<span class="title-check">✓</span> ' : ''}${isLocked ? '<span style="color:#fc8181; margin-right:4px;">🔒</span>' : ''}${escapeHtml(c.title)}
+            ${c.isSolved ? '<span class="title-check">✓</span> ' : ''}${escapeHtml(c.title)}
           </h3>
-          <p class="card-preview-text">${isLocked ? '<em style="color:var(--text-muted); font-size:0.83rem;">🔒 This question will be available to solve when unlocked</em>' : escapeHtml(cleanDesc)}</p>
+          <p class="card-preview-text">${escapeHtml(cleanDesc)}</p>
         </div>
         <div class="card-bottom-row">
           <span class="difficulty-pill ${diffClass}">${escapeHtml(c.difficulty)}</span>
-          <div class="card-status-indicator ${c.isSolved ? 'solved-text' : (isLocked ? 'locked-text' : 'unsolved-text')}">
-            ${isLocked ? '🔒 LOCKED' : (c.isSolved ? `✓ SOLVED (${c.solveCount || 0} solves)` : `○ ${c.solveCount || 0} solves`)}
+          <div class="card-status-indicator ${c.isSolved ? 'solved-text' : 'unsolved-text'}">
+            ${c.isSolved ? `✓ SOLVED (${c.solveCount || 0} solves)` : `○ ${c.solveCount || 0} solves`}
           </div>
         </div>
       `;
 
-      if (isLocked) {
-        card.style.cursor = 'not-allowed';
-        card.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          showToast('🔒 This question will be available to solve when unlocked.', 'info');
-        });
-      } else {
-        card.addEventListener('click', () => openChallengeModal(c.id));
-      }
+      card.addEventListener('click', () => openChallengeModal(c.id));
       elements.challengesGrid.appendChild(card);
     });
   }
@@ -1002,16 +922,6 @@
   function openChallengeModal(challengeId) {
     const c = state.challenges.find(item => item.id === challengeId);
     if (!c) return;
-
-    // Locked questions cannot be opened under any condition
-    if (c.isLocked) {
-      if (elements.challengeModal) {
-        elements.challengeModal.classList.remove('open');
-        elements.challengeModal.setAttribute('aria-hidden', 'true');
-      }
-      showToast('🔒 This question will be available to solve when unlocked.', 'info');
-      return;
-    }
 
     state.currentModalChallengeId = challengeId;
 
@@ -1062,10 +972,17 @@
       c.attachments.forEach(att => {
         const chip = document.createElement('a');
         chip.href = att.url;
-        chip.download = att.name;
-        chip.className = 'attachment-chip';
+        const isExternal = typeof att.url === 'string' && /^https?:\/\//i.test(att.url);
+        if (isExternal) {
+          chip.target = '_blank';
+          chip.rel = 'noopener noreferrer';
+        } else {
+          chip.download = att.name;
+        }
+        chip.className = 'attachment-chip' + (isExternal ? ' external-link' : '');
+        const actionIcon = isExternal ? '☁️ Open Link' : '📥 Download';
         chip.innerHTML = `
-          <span>📥 Download <strong>${escapeHtml(att.name)}</strong></span>
+          <span>${actionIcon}: <strong>${escapeHtml(att.name)}</strong></span>
           <span class="attachment-size">(${att.size})</span>
         `;
         elements.modalAttachmentsList.appendChild(chip);
@@ -1091,11 +1008,10 @@
       elements.modalHintsSection.style.display = 'none';
     }
 
-    // Flag input & lock states
+    // Flag input state
     elements.flagInput.value = '';
     elements.flagFeedback.style.display = 'none';
 
-    if (elements.modalLockedBanner) elements.modalLockedBanner.style.display = 'none';
     if (c.isSolved) {
       elements.flagInput.disabled = true;
       elements.flagInput.placeholder = 'Challenge already solved by your account';
@@ -1124,23 +1040,21 @@
     state.currentModalChallengeId = null;
   }
 
-  // Navigate between unlocked challenges inside modal
+  // Navigate between challenges inside modal
   function navigatePreviousChallenge() {
-    const unlocked = state.challenges.filter(c => !c.isLocked);
-    if (!state.currentModalChallengeId || unlocked.length === 0) return;
-    const currentIndex = unlocked.findIndex(c => c.id === state.currentModalChallengeId);
+    if (!state.currentModalChallengeId || state.challenges.length === 0) return;
+    const currentIndex = state.challenges.findIndex(c => c.id === state.currentModalChallengeId);
     if (currentIndex === -1) return;
-    const prevIndex = (currentIndex - 1 + unlocked.length) % unlocked.length;
-    openChallengeModal(unlocked[prevIndex].id);
+    const prevIndex = (currentIndex - 1 + state.challenges.length) % state.challenges.length;
+    openChallengeModal(state.challenges[prevIndex].id);
   }
 
   function navigateNextChallenge() {
-    const unlocked = state.challenges.filter(c => !c.isLocked);
-    if (!state.currentModalChallengeId || unlocked.length === 0) return;
-    const currentIndex = unlocked.findIndex(c => c.id === state.currentModalChallengeId);
+    if (!state.currentModalChallengeId || state.challenges.length === 0) return;
+    const currentIndex = state.challenges.findIndex(c => c.id === state.currentModalChallengeId);
     if (currentIndex === -1) return;
-    const nextIndex = (currentIndex + 1) % unlocked.length;
-    openChallengeModal(unlocked[nextIndex].id);
+    const nextIndex = (currentIndex + 1) % state.challenges.length;
+    openChallengeModal(state.challenges[nextIndex].id);
   }
 
   // Flag Submission Handler

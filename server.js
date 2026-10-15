@@ -246,10 +246,9 @@ app.get('/api/challenges', (req, res) => {
   const solves = userId ? db.getUserSolves(userId) : [];
   const solvedSet = new Set(solves.map(s => s.challenge_id));
   const solveCounts = db.getChallengeSolveCounts();
-  const challengeLocks = db.getChallengeLocks();
 
   // Strip all secret answers before sending to client!
-  const publicChallenges = getPublicChallenges(solvedSet, solveCounts, challengeLocks);
+  const publicChallenges = getPublicChallenges(solvedSet, solveCounts);
 
   res.json({
     challenges: publicChallenges,
@@ -300,13 +299,6 @@ app.post('/api/submit-flag', (req, res) => {
     });
   }
 
-  // Check if challenge is locked by administrator
-  if (db.isChallengeLocked(challengeId)) {
-    return res.status(403).json({
-      success: false,
-      error: 'This question will be available to solve when unlocked.'
-    });
-  }
 
   // Validate submitted flag against private answer
   const validation = validateFlag(challengeId, flag);
@@ -566,42 +558,6 @@ app.post('/api/admin/timer', adminAuthMiddleware, (req, res) => {
   });
 });
 
-// 5. Lock / Unlock Individual Challenge
-app.post('/api/admin/challenge-lock', adminAuthMiddleware, (req, res) => {
-  const { challengeId, isLocked } = req.body;
-  if (!challengeId) {
-    return res.status(400).json({ error: 'challengeId is required' });
-  }
-
-  db.setChallengeLock(challengeId, Boolean(isLocked));
-  notifyParticipants('challenge_lock_updated', {
-    challengeId,
-    isLocked: Boolean(isLocked)
-  });
-  res.json({
-    success: true,
-    challengeId,
-    isLocked: Boolean(isLocked),
-    message: `Challenge "${challengeId}" is now ${isLocked ? 'locked 🔒' : 'unlocked 🔓'}.`
-  });
-});
-
-// 6. Bulk Lock / Unlock All Challenges
-app.post('/api/admin/challenge-lock-all', adminAuthMiddleware, (req, res) => {
-  const { isLocked } = req.body;
-  const allIds = db.getAllChallengeIds();
-  const locks = db.setAllChallengeLocks(allIds, Boolean(isLocked));
-  notifyParticipants('challenge_lock_all_updated', {
-    isLocked: Boolean(isLocked),
-    locks
-  });
-  res.json({
-    success: true,
-    isLocked: Boolean(isLocked),
-    locks,
-    message: `All challenges are now ${isLocked ? 'locked 🔒' : 'unlocked 🔓'}.`
-  });
-});
 
 // 7. Download Leaderboard in Sheet format (CSV with UTF-8 BOM)
 app.get('/api/admin/export-leaderboard', adminAuthMiddleware, (req, res) => {

@@ -288,22 +288,16 @@ async function runTests() {
           const str = chunk.toString();
           if (str.includes('event: connected')) {
             receivedEvents.push('connected');
-            // Trigger an admin lock action to test broadcast delivery
-            await request('/api/admin/challenge-lock', {
+            // Trigger an admin action to test SSE broadcast delivery
+            await request('/api/admin/timer', {
               method: 'POST',
               headers: { Authorization: `Bearer ${adminToken}` },
-              body: { challengeId: 'crypto-01', isLocked: true }
+              body: { startTime: new Date().toISOString(), status: 'Live' }
             });
           }
-          if (str.includes('event: challenge_lock_updated')) {
-            receivedEvents.push('challenge_lock_updated');
+          if (str.includes('event: timer_updated')) {
+            receivedEvents.push('timer_updated');
             clearTimeout(timeout);
-            // Revert lock back to unlocked
-            await request('/api/admin/challenge-lock', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${adminToken}` },
-              body: { challengeId: 'crypto-01', isLocked: false }
-            });
             sseClientReq.destroy();
             resolve();
           }
@@ -316,51 +310,31 @@ async function runTests() {
     });
 
     assert.ok(receivedEvents.includes('connected'), 'SSE did not send connected event');
-    assert.ok(receivedEvents.includes('challenge_lock_updated'), 'SSE did not broadcast challenge_lock_updated event');
+    assert.ok(receivedEvents.includes('timer_updated'), 'SSE did not broadcast timer_updated event');
     console.log('  ✓ Server-Sent Events live stream broadcasts admin modifications in real-time');
 
-    // Test 17: Admin Lock / Unlock synchronization & solve blocking
-    console.log('[17] Testing Admin challenge lock synchronization & solve blocking');
-    // Lock crypto-01
-    const lockRes = await request('/api/admin/challenge-lock', {
-      method: 'POST',
+    // Test 17: Admin Challenge Update synchronization
+    console.log('[17] Testing Admin challenge update synchronization');
+    const updateRes = await request('/api/admin/challenges/crypto-01', {
+      method: 'PUT',
       headers: { Authorization: `Bearer ${adminToken}` },
-      body: { challengeId: 'crypto-01', isLocked: true }
+      body: { points: 120 }
     });
-    assert.strictEqual(lockRes.status, 200);
-    assert.strictEqual(lockRes.json.isLocked, true);
+    assert.strictEqual(updateRes.status, 200);
 
-    // Verify /api/challenges returns it locked with stripped description
-    const challengesAfterLock = await request('/api/challenges');
-    const lockedCh = challengesAfterLock.json.challenges.find(c => c.id === 'crypto-01');
-    assert.ok(lockedCh, 'crypto-01 not found');
-    assert.strictEqual(lockedCh.isLocked, true, 'crypto-01 should be locked in public API');
-    assert.strictEqual(lockedCh.description, '', 'Locked challenge description must be stripped');
+    // Verify /api/challenges returns updated points
+    const challengesAfterUpdate = await request('/api/challenges');
+    const updatedCh = challengesAfterUpdate.json.challenges.find(c => c.id === 'crypto-01');
+    assert.ok(updatedCh, 'crypto-01 not found');
+    assert.strictEqual(updatedCh.points, 120, 'crypto-01 points should be updated');
 
-    // Attempt to submit flag to locked challenge -> 403 Forbidden
-    const blockedSubmit = await request('/api/submit-flag', {
-      method: 'POST',
-      headers: { Cookie: `krypteia_session=${authToken}` },
-      body: { challengeId: 'crypto-01', flag: 'KRYPTEIA{c4354r_sh1ft_c1ph3r_unl0ck3d}' }
-    });
-    assert.strictEqual(blockedSubmit.status, 403, 'Submitting to locked challenge must return 403');
-    assert.ok(blockedSubmit.json.error.includes('when unlocked'), 'Expected unlock message');
-
-    // Unlock crypto-01
-    const unlockRes = await request('/api/admin/challenge-lock', {
-      method: 'POST',
+    // Revert back
+    await request('/api/admin/challenges/crypto-01', {
+      method: 'PUT',
       headers: { Authorization: `Bearer ${adminToken}` },
-      body: { challengeId: 'crypto-01', isLocked: false }
+      body: { points: 100 }
     });
-    assert.strictEqual(unlockRes.status, 200);
-    assert.strictEqual(unlockRes.json.isLocked, false);
-
-    // Verify /api/challenges returns it unlocked with full description restored
-    const challengesAfterUnlock = await request('/api/challenges');
-    const unlockedCh = challengesAfterUnlock.json.challenges.find(c => c.id === 'crypto-01');
-    assert.strictEqual(unlockedCh.isLocked, false, 'crypto-01 should be unlocked in public API');
-    assert.ok(unlockedCh.description.length > 10, 'Unlocked challenge description must be present');
-    console.log('  ✓ Admin question lock options sync and enforce solve blocks flawlessly');
+    console.log('  ✓ Admin challenge updates synchronize smoothly');
 
     // Test 18: Leaderboard tie-break based on first submission when marks are equal
     console.log('[18] Testing Leaderboard tie-break based on first submission for identical marks');
@@ -436,6 +410,20 @@ async function runTests() {
     const lbAfterDel = await request('/api/leaderboard');
     assert.ok(!lbAfterDel.json.leaderboard.some(u => u.username === 'NewCadet99'), 'Deleted user must be removed from leaderboard');
     console.log('  ✓ User instantly appears on leaderboard upon registration and admin can delete user cleanly');
+
+    // Test 20: Level 10 Northwind Capital forensics challenge with dual attachments
+    console.log('[20] Testing Level 10 Northwind Capital CTF challenge (forensics-10)');
+    const chListRes = await request('/api/challenges');
+    const f10 = chListRes.json.challenges.find(c => c.id === 'forensics-10');
+    assert.ok(f10, 'Level 10 challenge forensics-10 must exist');
+    assert.strictEqual(f10.points, 500);
+    assert.strictEqual(f10.difficulty, 'Expert');
+    assert.strictEqual(f10.category, 'Digital Forensics');
+    assert.ok(f10.description.includes('Northwind Capital'));
+    assert.strictEqual(f10.attachments.length, 2);
+    assert.ok(f10.attachments.some(a => a.name === 'northwind_capital_forensics.zip' && a.url.includes('/attachments/')));
+    assert.ok(f10.attachments.some(a => a.url.includes('drive.google.com')));
+    console.log('  ✓ Level 10 Northwind Capital challenge verified with dual attachments and full access');
 
     console.log('\n>>> ALL BACKEND API TESTS PASSED SUCCESSFULLY! <<<');
   } finally {
