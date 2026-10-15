@@ -1,8 +1,10 @@
+const fs = require('fs');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const db = require('./database');
 const { getPublicChallenges, validateFlag, CHALLENGES } = require('./challenges');
+const excelLeaderboard = require('./excel-leaderboard');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -425,11 +427,86 @@ app.post('/api/submit-flag', (req, res) => {
 app.get('/api/leaderboard', (req, res) => {
   const currentUserId = req.user ? req.user.id : null;
   const leaderboard = db.getLeaderboard(currentUserId);
+  const excelData = excelLeaderboard.getLeaderboardData();
   res.json({
     leaderboard,
     totalParticipants: leaderboard.length,
+    excelLeaderboard: excelData.teams,
     generatedAt: new Date().toISOString()
   });
+});
+
+// --- Excel Sheet-Driven Leaderboard (Dedicated Endpoints) ---
+app.get('/api/leaderboard/sheet', (req, res) => {
+  const data = excelLeaderboard.getLeaderboardData();
+  res.json({
+    success: true,
+    ...data
+  });
+});
+
+app.get('/api/leaderboard/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  // Immediately send initial payload
+  const initial = excelLeaderboard.getLeaderboardData();
+  res.write(`event: leaderboard_update\ndata: ${JSON.stringify(initial)}\n\n`);
+
+  // Listener when Excel file on disk changes
+  const onLeaderboardChange = (data) => {
+    try {
+      res.write(`event: leaderboard_update\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch (_) {
+      excelLeaderboard.removeListener(onLeaderboardChange);
+    }
+  };
+
+  excelLeaderboard.addListener(onLeaderboardChange);
+
+  // Keep-alive heartbeat every 15s
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch (_) {
+      clearInterval(heartbeat);
+      excelLeaderboard.removeListener(onLeaderboardChange);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    excelLeaderboard.removeListener(onLeaderboardChange);
+  });
+});
+
+app.get('/api/leaderboard/download', (req, res) => {
+  if (fs.existsSync(excelLeaderboard.EXCEL_FILE_PATH)) {
+    res.download(excelLeaderboard.EXCEL_FILE_PATH, 'leaderboard.xlsx');
+  } else {
+    res.status(404).json({ error: 'Spreadsheet not found' });
+  }
+});
+
+app.post('/api/leaderboard/upload', express.raw({ type: ['application/octet-stream', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'], limit: '15mb' }), (req, res) => {
+  try {
+    if (!req.body || !req.body.length) {
+      return res.status(400).json({ error: 'No Excel file data received' });
+    }
+    const updated = excelLeaderboard.updateExcelFile(req.body);
+    res.json({
+      success: true,
+      message: 'Excel spreadsheet updated and leaderboard re-synced',
+      ...updated
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to process Excel upload: ' + err.message });
+  }
 });
 
 // --- Competition Rules ---
@@ -744,12 +821,16 @@ app.use((req, res) => {
 
 // Start listening
 if (require.main === module) {
+  excelLeaderboard.initExcelWatcher();
   app.listen(PORT, () => {
     console.log(`====================================================`);
     console.log(`  KRYPTEIA CTF PORTAL is live on http://localhost:${PORT}`);
+    console.log(`  Excel Leaderboard synced from leaderboard.xlsx`);
     console.log(`  Institution: St. Peter's Engineering College`);
     console.log(`====================================================`);
   });
+} else {
+  excelLeaderboard.initExcelWatcher();
 }
 
 module.exports = app;

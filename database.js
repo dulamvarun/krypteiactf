@@ -99,8 +99,10 @@ try {
   let dataDir;
   let dbPath;
 
-  // If in Vercel or read-only serverless environment, use /tmp
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  if (process.env.DB_PATH) {
+    dbPath = process.env.DB_PATH;
+    sqliteDb = new Database(dbPath);
+  } else if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     dataDir = path.join(os.tmpdir(), 'krypteia_data');
     try {
       if (!fs.existsSync(dataDir)) {

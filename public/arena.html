@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <meta name="theme-color" content="#0e1210" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>KRYPTEIA CTF — College Cybersecurity Competition Portal</title>
+  <meta name="description" content="Krypteia CTF: The Cyber Security Technical Club at St. Peter's Engineering College. Live jeopardy-style cybersecurity competition platform." />
+  
+  <!-- Cyber Shield SVG Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300ff66'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.52-3.13 8.75-7 9.88-3.87-1.13-7-5.36-7-9.88V6.3l7-3.12z'/></svg>" />
+  
+  <!-- Google Fonts: Inter & JetBrains Mono (display=swap for instant lightweight text render) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/css/style.css?v=5.0" />
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="navbar" role="banner">
+    <a href="#challenges" class="nav-brand" id="brand-link" aria-label="Krypteia CTF Home">
+      <div class="brand-icon-wrap">
+        <span class="brand-icon">K_</span>
+      </div>
+      <div class="brand-text-wrap">
+        <div class="brand-title">KRYPTEIA <span>CTF</span></div>
+        <div class="brand-subtitle">St. Peter's Engineering College</div>
+      </div>
+    </a>
+
+    <nav aria-label="Main Navigation">
+      <ul class="nav-links">
+        <li>
+          <a href="#challenges" class="nav-link active" data-tab="challenges" id="nav-challenges">
+            <span>⚡ Challenges</span>
+          </a>
+        </li>
+        <li>
+          <a href="#leaderboard" class="nav-link" data-tab="leaderboard" id="nav-leaderboard">
+            <span>🏆 Leaderboard</span>
+          </a>
+        </li>
+        <li>
+          <a href="#rules" class="nav-link" data-tab="rules" id="nav-rules">
+            <span>📜 Rules</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="nav-actions">
+      <!-- Unauthenticated State -->
+      <button type="button" class="btn btn-outline-green btn-sm" id="auth-btn">
+        <span>🔑 Sign In / Register</span>
+      </button>
+
+      <!-- Authenticated Participant State -->
+      <div class="user-badge-pill" id="user-pill" style="display: none;" title="View Your Profile">
+        <span class="user-badge-name" id="user-badge-name">Cadet</span>
+        <span class="user-badge-score" id="user-badge-score">0 PTS</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- App Main Content Area -->
+  <main class="main-container" id="main-content" role="main">
+
+    <!-- VIEW 1: CHALLENGES DASHBOARD -->
+    <section id="challenges-view" aria-label="Challenges Portal">
+      
+      <!-- CTF Compact Dashboard Banner -->
+      <div class="ctf-dashboard-banner">
+        <div class="banner-header">
+          <div class="banner-left">
+            <div class="banner-title-row">
+              <span class="comp-badge live" id="comp-status-badge">
+                <span class="pulse-dot"></span> LIVE
+              </span>
+              <h1 class="banner-title" id="comp-title">KRYPTEIA CTF</h1>
+            </div>
+            <div class="banner-institution">
+              Hosted by <strong>Krypteia — The Cyber Security Technical Club</strong> · St. Peter's Engineering College
+            </div>
+          </div>
+
+          <!-- Countdown Timer -->
+          <div class="countdown-box" aria-label="Competition Remaining Time">
+            <div class="countdown-label">Time Remaining</div>
+            <div class="countdown-digits" id="countdown-timer">--:--:--</div>
+          </div>
+        </div>
+
+        <!-- Live Metrics Grid -->
+        <div class="dashboard-metrics">
+          <div class="metric-card">
+            <div class="metric-icon green">🎯</div>
+            <div class="metric-info">
+              <span class="metric-label">Your Score</span>
+              <span class="metric-value" id="metric-score">0 PTS</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-icon cyan">🔓</div>
+            <div class="metric-info">
+              <span class="metric-label">Challenges Solved</span>
+              <span class="metric-value">
+                <span id="metric-solves">0</span> / <span id="metric-total">8</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-icon purple">🏅</div>
+            <div class="metric-info">
+              <span class="metric-label">Current Rank</span>
+              <span class="metric-value" id="metric-rank">-</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-icon amber">📊</div>
+            <div class="metric-info">
+              <span class="metric-label">Rankings</span>
+              <a href="#leaderboard" class="metric-value" style="font-size: 1.05rem; color: var(--accent-green);">
+                View Board →
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pre-Event Standby / Countdown Screen (Shown when event is not started yet) -->
+      <div class="pre-event-card" id="pre-event-card" style="display: none;">
+        <div class="pre-event-header">
+          <div class="pre-event-badge"><span class="pulse-dot amber"></span> ARENA STANDBY · IST SCHEDULED</div>
+          <h2 class="pre-event-title">Competition Has Not Started Yet</h2>
+          <p class="pre-event-subtitle">KRYPTEIA CTF arena is in pre-launch countdown. All challenge briefs, diagnostic environments, and flag submission consoles will unlock automatically in:</p>
+        </div>
+
+        <div class="pre-event-countdown-display" id="pre-event-countdown-display">
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-days">00</span>
+            <span class="countdown-tag">DAYS</span>
+          </div>
+          <div class="countdown-colon">:</div>
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-hours">00</span>
+            <span class="countdown-tag">HOURS</span>
+          </div>
+          <div class="countdown-colon">:</div>
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-minutes">00</span>
+            <span class="countdown-tag">MINUTES</span>
+          </div>
+          <div class="countdown-colon">:</div>
+          <div class="countdown-unit">
+            <span class="countdown-val" id="pre-seconds">00</span>
+            <span class="countdown-tag">SECONDS</span>
+          </div>
+        </div>
+
+        <div class="pre-event-info-grid">
+          <div class="pre-info-item">
+            <span class="pre-info-icon">🕒</span>
+            <div class="pre-info-text">
+              <span class="pre-info-label">Official Kickoff (IST)</span>
+              <strong class="pre-info-val" id="pre-start-time-ist">Calculating...</strong>
+            </div>
+          </div>
+          <div class="pre-info-item">
+            <span class="pre-info-icon">🛡️</span>
+            <div class="pre-info-text">
+              <span class="pre-info-label">Contestant Pre-Registration</span>
+              <span class="pre-info-val" id="pre-auth-notice">You can register your account and log in now while waiting.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pre-event-actions">
+          <button type="button" class="btn btn-green btn-md" id="pre-auth-btn">
+            <span>🔑 Sign In / Register Account</span>
+          </button>
+          <a href="#rules" class="btn btn-outline btn-md">
+            <span>📜 Read Competition Rules</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Active Challenges Area (Shown when event is live) -->
+      <div id="active-challenges-area">
+        <!-- Filters & Search Controls -->
+        <div class="filter-controls-row">
+          <div class="filters-stack">
+            <!-- Status Filter: All / Unsolved / Solved -->
+            <div class="status-filter-pills" id="status-filter-pills" role="tablist" aria-label="Status Filter">
+              <button type="button" class="status-pill active" data-status="all" id="status-filter-all">
+                <span>All Challenges</span>
+                <span class="status-count" id="count-all">0</span>
+              </button>
+              <button type="button" class="status-pill" data-status="unsolved" id="status-filter-unsolved">
+                <span>○ Unsolved</span>
+                <span class="status-count" id="count-unsolved">0</span>
+              </button>
+              <button type="button" class="status-pill" data-status="solved" id="status-filter-solved">
+                <span>✓ Solved</span>
+                <span class="status-count" id="count-solved">0</span>
+              </button>
+            </div>
+
+            <!-- Category Pills -->
+            <div class="category-pills" id="category-pills" role="tablist" aria-label="Challenge Categories">
+              <!-- Populated by app.js -->
+            </div>
+          </div>
+
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input 
+              type="search" 
+              class="search-input" 
+              id="search-input" 
+              placeholder="Search challenges..." 
+              aria-label="Search challenges"
+            />
+          </div>
+        </div>
+
+        <!-- Challenge Cards Grid -->
+        <div class="challenges-grid" id="challenges-grid" role="region" aria-label="Challenges Grid">
+          <!-- Rendered by app.js -->
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: LEADERBOARD -->
+    <section id="leaderboard-view" class="leaderboard-view" style="display: none;" aria-label="Leaderboard">
+      <div class="page-header-row">
+        <div>
+          <h1 class="page-heading">🏆 Official Leaderboard</h1>
+          <p class="page-subheading">Authoritative rankings updated in real-time. Highest score wins; ties broken by earliest solve time.</p>
+        </div>
+        <div style="display: flex; gap: 0.6rem; align-items: center;">
+          <input 
+            type="search" 
+            class="search-input" 
+            id="lb-search-input" 
+            placeholder="Search participant..." 
+            style="width: 220px;" 
+          />
+          <button type="button" class="btn btn-outline btn-sm" id="lb-refresh-btn" title="Refresh Leaderboard">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Top 3 Podium Cards -->
+      <div class="podium-container" id="podium-container">
+        <!-- Rendered by app.js -->
+      </div>
+
+      <!-- Full Standings Table -->
+      <div class="table-card">
+        <table class="lb-table" aria-label="Leaderboard Standings">
+          <thead>
+            <tr>
+              <th style="width: 80px;">Rank</th>
+              <th>Participant</th>
+              <th>Total Score</th>
+              <th>Solved</th>
+              <th>Last Solve Time</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-tbody">
+            <!-- Rendered by app.js -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- VIEW 3: COMPETITION RULES -->
+    <section id="rules-view" class="rules-view" style="display: none;" aria-label="Competition Rules">
+      <div class="page-header-row">
+        <div>
+          <h1 class="page-heading">📜 Competition Rules & Ethics</h1>
+          <p class="page-subheading">Guidelines and code of conduct for KRYPTEIA CTF at St. Peter's Engineering College.</p>
+        </div>
+      </div>
+
+      <div class="rules-grid" id="rules-grid">
+        <!-- Rendered by app.js -->
+      </div>
+
+      <!-- Recommended Cyber Tools -->
+      <div class="tools-box">
+        <h2 style="font-size: 1.15rem; color: #ffffff;">🛠️ Recommended CTF Tools & Resources</h2>
+        <div class="tools-grid">
+          <div class="tool-item">
+            <span class="tool-name">CyberChef</span>
+            <span class="tool-desc">Swiss Army Knife for XOR, Hex, Base64, and ciphers.</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-name">Wireshark / tcpdump</span>
+            <span class="tool-desc">Inspect network packets and follow TCP/HTTP streams.</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-name">ExifTool / strings</span>
+            <span class="tool-desc">Extract embedded metadata, comments, and file chunks.</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-name">Browser DevTools</span>
+            <span class="tool-desc">Console, Network headers, Cookies, and local storage testing.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Challenge Detail Modal -->
+  <div class="modal-overlay" id="challenge-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-badges-row">
+            <span class="card-category-pill" id="modal-category">Category</span>
+            <span class="card-points-badge" id="modal-points">100 PTS</span>
+            <span class="difficulty-pill diff-easy" id="modal-difficulty">Easy</span>
+            <span class="card-status-pill pill-unsolved" id="modal-solves-count">0 solves</span>
+            <span class="comp-badge live" id="modal-solved-status" style="display: none;">✓ SOLVED</span>
+          </div>
+          <h2 class="modal-title" id="modal-title">Challenge Title</h2>
+        </div>
+        <button type="button" class="modal-close-btn" id="modal-close-btn" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Prominent Solved/Unsolved Status Banner -->
+        <div class="modal-solve-banner" id="modal-solve-banner" style="display: none;"></div>
+
+        <!-- Prominent Locked Banner if challenge is locked by admin -->
+        <div class="modal-locked-banner" id="modal-locked-banner" style="display: none;">
+          <span class="locked-banner-icon">🔒</span>
+          <div class="locked-banner-text">
+            <strong>Challenge Locked by Administrator</strong>
+            <p>This question has been temporarily locked by CTF organizers. Flag submissions and challenge files are currently disabled.</p>
+          </div>
+        </div>
+
+        <!-- Formatted Description -->
+        <div class="modal-description" id="modal-description"></div>
+
+        <!-- Downloadable Attachments -->
+        <div class="attachments-section" id="modal-attachments-section" style="display: none;">
+          <div class="section-label">Challenge Attachments</div>
+          <div id="modal-attachments-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        </div>
+
+        <!-- Hints Accordion -->
+        <div class="hints-container" id="modal-hints-section" style="display: none;">
+          <div class="section-label">Hints</div>
+          <div id="modal-hints-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        </div>
+
+        <!-- Flag Submission Box -->
+        <div class="submission-card">
+          <div class="section-label">Submit Solution Flag</div>
+          <form class="submission-form" id="flag-form">
+            <input 
+              type="text" 
+              class="flag-input" 
+              id="flag-input" 
+              placeholder="KRYPTEIA{...}" 
+              autocomplete="off" 
+              required 
+            />
+            <button type="submit" class="btn btn-green" id="flag-submit-btn">
+              Submit Flag
+            </button>
+          </form>
+
+          <div id="flag-feedback" class="feedback-banner" style="display: none;"></div>
+        </div>
+      </div>
+
+      <!-- Navigation Footer -->
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline btn-sm" id="btn-prev-challenge">
+          ← Previous
+        </button>
+        <span class="modal-footer-hint" style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">
+          Press Esc to close
+        </span>
+        <button type="button" class="btn btn-outline btn-sm" id="btn-next-challenge">
+          Next →
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication Modal (Sign In & Register) -->
+  <div class="modal-overlay" id="auth-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab-btn active" id="login-tab-btn">Sign In</button>
+        <button type="button" class="auth-tab-btn" id="register-tab-btn">Create Account</button>
+      </div>
+
+      <div class="modal-body" style="padding-top: 1rem;">
+        <!-- Auth Feedback -->
+        <div id="auth-feedback" class="feedback-banner" style="display: none;"></div>
+
+        <!-- Login Form -->
+        <form id="login-form">
+          <div class="form-group">
+            <label class="form-label" for="login-identifier">Username or Email</label>
+            <input type="text" class="form-input" id="login-identifier" required placeholder="e.g. cyber_cadet or cadet@spec.ac.in" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="login-password">Password</label>
+            <input type="password" class="form-input" id="login-password" required placeholder="••••••••" />
+          </div>
+          <button type="submit" class="btn btn-green" style="width: 100%; margin-top: 0.5rem;" id="login-submit-btn">
+            Sign In to CTF
+          </button>
+        </form>
+
+        <!-- Register Form -->
+        <form id="register-form" style="display: none;">
+          <div class="form-group">
+            <label class="form-label" for="reg-username">Username</label>
+            <input type="text" class="form-input" id="reg-username" required placeholder="e.g. spec_hacker" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="reg-email">College / Participant Email</label>
+            <input type="email" class="form-input" id="reg-email" required placeholder="e.g. participant@spec.ac.in" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="reg-password">Password (min 6 characters)</label>
+            <input type="password" class="form-input" id="reg-password" required minlength="6" placeholder="••••••••" />
+          </div>
+          <button type="submit" class="btn btn-green" style="width: 100%; margin-top: 0.5rem;" id="register-submit-btn">
+            Register Participant Account
+          </button>
+        </form>
+      </div>
+
+      <div class="modal-footer" style="justify-content: flex-end;">
+        <button type="button" class="btn btn-outline btn-sm" id="auth-modal-close">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Profile Modal -->
+  <div class="modal-overlay" id="profile-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="card-category-pill">Participant Dossier</span>
+          <h2 class="modal-title" id="profile-username">User</h2>
+          <div style="font-size: 0.85rem; color: var(--text-secondary);" id="profile-email">email@spec.ac.in</div>
+        </div>
+        <button type="button" class="modal-close-btn" id="profile-modal-close" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="dashboard-metrics" style="border: none; padding: 0;">
+          <div class="metric-card">
+            <div class="metric-icon cyan">🏅</div>
+            <div class="metric-info">
+              <span class="metric-label">Rank</span>
+              <span class="metric-value" id="profile-rank">#1</span>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon green">⚡</div>
+            <div class="metric-info">
+              <span class="metric-label">Points</span>
+              <span class="metric-value" id="profile-score">0 PTS</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top: 0.5rem;">Solved Challenges (<span id="profile-solves-count">0</span>)</div>
+        <div id="profile-solves-list" style="display: flex; flex-direction: column; max-height: 200px; overflow-y: auto;">
+          <!-- Solved items -->
+        </div>
+      </div>
+
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button type="button" class="btn btn-outline btn-sm" id="profile-logout-btn" style="color: var(--accent-danger); border-color: rgba(255, 51, 102, 0.3);">
+          🚪 Logout
+        </button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('profile-modal').classList.remove('open')">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications Container -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <!-- Site Footer -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="footer-inner">
+      <div class="footer-top-row">
+        <span>🛡️ <strong>Krypteia</strong> — The Cyber Security Technical Club</span>
+        <span>·</span>
+        <span>St. Peter's Engineering College, Maisammaguda</span>
+        <span>·</span>
+        <span>Jeopardy-Style Cybersecurity Platform · 2026</span>
+      </div>
+
+      <!-- Tech Support By: Riftgo Studios & Don Deal -->
+      <div class="tech-support-row">
+        <span class="tech-support-label">TECH SUPPORT BY:</span>
+        <div class="tech-support-badges">
+          <a href="https://www.instagram.com/riftgostudios/" target="_blank" rel="noopener noreferrer" class="tech-support-badge" title="Riftgo Studios on Instagram" aria-label="Riftgo Studios on Instagram">
+            <img src="/images/riftgo-studios.png" alt="Riftgo Studios" class="tech-support-logo" />
+          </a>
+          <span class="tech-support-badge don-deal-badge" title="Don Deal — Decided. Done. Delivered." aria-label="Don Deal">
+            <img src="/images/don-deal.png" alt="Don Deal" class="tech-support-logo don-deal-logo" />
+          </span>
+        </div>
+      </div>
+
+      <!-- Admin Portal Access Link -->
+      <div class="footer-admin-row">
+        <a href="/admin" class="footer-admin-link">🔒 Organizer Command Portal</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="/js/api.js?v=5.2"></script>
+  <script src="/js/app.js?v=5.2"></script>
+</body>
+</html>

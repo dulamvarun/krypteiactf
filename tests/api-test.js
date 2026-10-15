@@ -1,4 +1,6 @@
-process.env.FORCE_MEMORY_DB = 'true';
+const path = require('path');
+const os = require('os');
+process.env.DB_PATH = path.join(os.tmpdir(), 'test_krypteia_' + Date.now() + '.db');
 const assert = require('assert');
 const app = require('../server');
 const db = require('../database');
