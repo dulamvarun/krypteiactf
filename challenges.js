@@ -189,21 +189,7 @@ Use browser document.cookie manipulation or curl to present the required cookie.
     points: 150,
     description: `Our incident response team recovered an image from a compromised workstation. The file appears ordinary, but the analyst suspects that evidence has been left behind.
 
-Your task is to inspect the provided evidence and recover the complete flag.
-
-**Evidence 1 — Image Metadata**
-
-The extracted metadata contains a suspicious comment:
-
-\`KRYPTEIA{m3t4d4t4_\`
-
-**Evidence 2 — Embedded Artifact**
-
-A separate artifact extracted from the same image contains:
-
-\`d03sn7_l13}\`
-
-Determine the correct order of the fragments and submit the complete flag.`,
+Your task is to inspect the provided evidence and recover the complete flag.`,
     hints: [
       'Forensic investigations often require piecing together disjointed artifacts found in image metadata and file payloads.',
       'Check the syntax of CTF flag conventions to reconstruct the fragments into a single coherent flag.'
